@@ -60,6 +60,48 @@ void DataInStream(char infname[], chanend c_out)
   return;
 }
 
+
+//Later add generality using the number of workers
+void collector(chanend c_out, chanend work_out[]){
+    uchar val;
+    for (int y = 0; y < IMHT/2; y++){
+        for (int x = 0; x < IMWD; x++){
+            work_out[0] :> val;
+            c_out <: val;
+            printf("recieved work from channel 1\n");
+            
+        }
+    }
+    
+    for (int y = 0; y < IMHT/2; y++){
+            for (int x = 0; x < IMWD; x++){
+                work_out[1] :> val;
+                printf("recieved work from channel 2");
+                c_out <: val;
+            }
+        }
+}
+
+//The worker will recieve the cells it works on plus a 'ghost row' at the top and bottom and 
+//a ghost collumn on the left and right. The height must take this into account but modular arithmetic 
+//is used for the width so the width shouldn't
+void worker(chanend work_in, chanend work_out, int height, int width){
+    uchar vals[16][10];
+    uchar val;
+    for (int y = 0; y < height; y++){
+        for(int x = 0; x < width; x++ ){
+            work_in :> val;
+            vals[x][y] = val;
+        }
+    }
+    for (int y = 0; y < height-2; y++){
+            for(int x = 0; x < width; x++ ){
+                    work_out <:(uchar)( vals[x][y] ^ 0xFF ); 
+            }
+    }
+}
+
+
 /////////////////////////////////////////////////////////////////////////////////////////
 //
 // Start your implementation by changing this function to implement the game of life
@@ -67,10 +109,9 @@ void DataInStream(char infname[], chanend c_out)
 // Currently the function just inverts the image
 //
 /////////////////////////////////////////////////////////////////////////////////////////
-void distributor(chanend c_in, chanend c_out, chanend fromAcc)
+void distributor(chanend c_in, chanend fromAcc,chanend work_in[])
 {
   uchar val;
-
   //Starting up and wait for tilting of the xCore-200 Explorer
   printf( "ProcessImage: Start, size = %dx%d\n", IMHT, IMWD );
   printf( "Waiting for Board Tilt...\n" );
@@ -79,13 +120,22 @@ void distributor(chanend c_in, chanend c_out, chanend fromAcc)
   //Read in and do something with your image values..
   //This just inverts every pixel, but you should
   //change the image according to the "Game of Life"
-  printf( "Processing...\n" );
-  for( int y = 0; y < IMHT; y++ ) {   //go through all lines
-    for( int x = 0; x < IMWD; x++ ) { //go through each pixel per line
-      c_in :> val;                    //read the pixel value
-      c_out <: (uchar)( val ^ 0xFF ); //send some modified pixel out
-    }
-  }
+ printf( "Processing...\n" );
+   for( int y = 0; y < IMHT; y++ ) {   //go through all lines
+        for( int x = 0; x < IMWD; x++ ) { //go through each pixel per line
+          c_in :> val;
+          
+          //Conditionally send work to channels including ghost rows
+          if (y <= (IMHT/2)+1 || y == IMHT - 1){
+              work_in[0] <: val;
+          }
+          if (y >= (IMHT/2) || y == 0){
+              
+              work_in[1] <: val;
+          }
+          
+        }
+      }
   printf( "\nOne processing round completed...\n" );
 }
 
@@ -174,16 +224,25 @@ int main(void) {
 
 i2c_master_if i2c[1];               //interface to orientation
 
+//int workers = 2;
 char infname[] = "test.pgm";     //put your input image path here
 char outfname[] = "testout.pgm"; //put your output image path here
-chan c_inIO, c_outIO, c_control;    //extend your channel definitions here
+chan c_inIO, c_outIO, c_control, work_in[2],work_out[2];    //extend your channel definitions here
 
 par {
     i2c_master(i2c, 1, p_scl, p_sda, 10);   //server thread providing orientation data
     orientation(i2c[0],c_control);        //client thread reading orientation data
     DataInStream(infname, c_inIO);          //thread to read in a PGM image
     DataOutStream(outfname, c_outIO);       //thread to write out a PGM image
-    distributor(c_inIO, c_outIO, c_control);//thread to coordinate work on image
+    distributor(c_inIO, c_control,work_in);//thread to coordinate work on image
+//    par (int i = 0; i < 2; i++){
+//        worker(work_in[i],work_out[i],(IMHT/2)+2,IMWD+2);
+//    }
+    
+    worker(work_in[0],work_out[0],(IMHT/2)+2,IMWD);
+    worker(work_in[1],work_out[1],(IMHT/2)+2,IMWD);
+    collector(c_outIO, work_out);
+    
   }
 
   return 0;
