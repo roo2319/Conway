@@ -68,7 +68,6 @@ void collector(chanend c_out, chanend work_out[]){
         for (int x = 0; x < IMWD; x++){
             work_out[0] :> val;
             c_out <: val;
-            printf("recieved work from channel 1\n");
             
         }
     }
@@ -76,7 +75,7 @@ void collector(chanend c_out, chanend work_out[]){
     for (int y = 0; y < IMHT/2; y++){
             for (int x = 0; x < IMWD; x++){
                 work_out[1] :> val;
-                printf("recieved work from channel 2");
+                
                 c_out <: val;
             }
         }
@@ -126,7 +125,7 @@ void distributor(chanend c_in, chanend fromAcc,chanend work_in[])
           c_in :> val;
           
           //Conditionally send work to channels including ghost rows
-          if (y <= (IMHT/2)+1 || y == IMHT - 1){
+          if (y <= (IMHT/2) || y == IMHT - 1){
               work_in[0] <: val;
           }
           if (y >= (IMHT/2) || y == 0){
