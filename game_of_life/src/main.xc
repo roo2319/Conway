@@ -7,9 +7,10 @@
 #include "pgmIO.h"
 #include "i2c.h"
 
-#define  IMHT 16                  //image height
-#define  IMWD 16                  //image width
-
+#define IMHT 16                  //image height
+#define IMWD 16                  //image width
+#define WORKERS 2
+#define WORKER_ROWS (IMHT / WORKERS)
 typedef unsigned char uchar;      //using uchar as shorthand
 
 port p_scl = XS1_PORT_1E;         //interface ports to orientation
@@ -60,6 +61,47 @@ void DataInStream(char infname[], chanend c_out)
   return;
 }
 
+// positive modulo function
+inline int mod(int x, int n) {
+    return (x % n + n) % n;
+}
+
+// returns the next cell value (this could be optimized!)
+uchar next_cell(int neighbours, char cell) {
+    if ((cell == 1 && (neighbours < 2 || neighbours > 3)) || (cell == 0 && neighbours != 3)) {
+        return 0;
+    } else {
+        return 1;
+    }
+}
+
+// right now this is broken, distributor does not send the rows in the correct order
+// but it SHOULD work
+void conway_worker(chanend work_in, chanend work_out) {
+    uchar cells[WORKER_ROWS + 2][IMWD];
+    // turns out the chan :> arr works but the IDE complains
+    for (int y = 0; y < WORKER_ROWS + 2; y++) {
+        for (int x = 0; x < IMWD; x++) {
+            work_in :> cells[y][x];
+            // for now let's just turn 255 into 1
+            cells[y][x] &= 0x01;
+        }
+    }
+    for (int y = 1; y < WORKER_ROWS + 1; y++) {
+        for (int x = 0; x < IMWD; x++) {
+            // neighbour cells coords
+            int u = y - 1,
+                d = y + 1,
+                l = mod(x - 1, IMWD),
+                r = mod(x + 1, IMWD);
+            char neighbours = cells[u][l] + cells[u][x] + cells[u][r]
+                            + cells[y][l]               + cells[y][r]
+                            + cells[d][l] + cells[d][x] + cells[d][r];
+            uchar next = next_cell(neighbours, cells[y][x]) * 255;
+            work_out <: next;
+        }
+    }
+}
 
 //Later add generality using the number of workers
 void collector(chanend c_out, chanend work_out[]){
@@ -68,38 +110,35 @@ void collector(chanend c_out, chanend work_out[]){
         for (int x = 0; x < IMWD; x++){
             work_out[0] :> val;
             c_out <: val;
-            
         }
     }
     
     for (int y = 0; y < IMHT/2; y++){
-            for (int x = 0; x < IMWD; x++){
-                work_out[1] :> val;
-                
-                c_out <: val;
-            }
+        for (int x = 0; x < IMWD; x++){
+            work_out[1] :> val;
+            c_out <: val;
         }
+    }
 }
 
 //The worker will recieve the cells it works on plus a 'ghost row' at the top and bottom and 
 //a ghost collumn on the left and right. The height must take this into account but modular arithmetic 
 //is used for the width so the width shouldn't
 void worker(chanend work_in, chanend work_out, int height, int width){
-    uchar vals[16][10];
+    uchar vals[10][16];
     uchar val;
     for (int y = 0; y < height; y++){
         for(int x = 0; x < width; x++ ){
             work_in :> val;
-            vals[x][y] = val;
+            vals[y][x] = val;
         }
     }
     for (int y = 0; y < height-2; y++){
             for(int x = 0; x < width; x++ ){
-                    work_out <:(uchar)( vals[x][y] ^ 0xFF ); 
+                    work_out <:(uchar)( vals[y][x] ^ 0xFF );
             }
     }
 }
-
 
 /////////////////////////////////////////////////////////////////////////////////////////
 //
@@ -238,8 +277,10 @@ par {
 //        worker(work_in[i],work_out[i],(IMHT/2)+2,IMWD+2);
 //    }
     
-    worker(work_in[0],work_out[0],(IMHT/2)+2,IMWD);
-    worker(work_in[1],work_out[1],(IMHT/2)+2,IMWD);
+    //worker(work_in[0],work_out[0],(IMHT/2)+2,IMWD);
+    //worker(work_in[1],work_out[1],(IMHT/2)+2,IMWD);
+    conway_worker(work_in[0], work_out[0]);
+    conway_worker(work_in[1], work_out[1]);
     collector(c_outIO, work_out);
     
   }

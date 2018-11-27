@@ -38,7 +38,7 @@ void conway(char out[IMHT][IMWD] , char in[IMHT+2][IMWD]){
     }
 }
 
-void test(){ 
+void test_conway(){
     assert(mod(-1,10) == 9);
     assert(mod(1,2) == 1);
     assert(mod(20,2) == 0);
@@ -70,14 +70,4 @@ void test(){
     }
     printf("Passed conway test\n");
     
-}
-
-int main(int argc, char const *argv[])
-{
-    if (argc == 1)
-    {
-        test();
-        printf("All tests passed");
-    }
-    return 0;
 }
