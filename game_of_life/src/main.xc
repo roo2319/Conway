@@ -49,7 +49,7 @@ void DataInStream(char infname[], chanend c_out)
   for( int y = 0; y < IMHT; y++ ) {
     _readinline( line, IMWD );
     for( int x = 0; x < IMWD; x++ ) {
-      c_out <: line[ x ];
+      c_out <: line[x];
       printf( "-%4.1d ", line[ x ] ); //show image values
     }
     printf( "\n" );
@@ -75,70 +75,53 @@ uchar next_cell(int neighbours, char cell) {
     }
 }
 
-// right now this is broken, distributor does not send the rows in the correct order
-// but it SHOULD work
+//The worker will recieve the cells it works on plus a 'ghost row' at the top and bottom and
+//a ghost collumn on the left and right. The height must take this into account but modular arithmetic
+//is used for the width so the width shouldn't. Worker communicates directly with data out using sem
 void conway_worker(chanend work_in, chanend work_out) {
-    uchar cells[WORKER_ROWS + 2][IMWD];
-    // turns out the chan :> arr works but the IDE complains
-    for (int y = 0; y < WORKER_ROWS + 2; y++) {
-        for (int x = 0; x < IMWD; x++) {
-            work_in :> cells[y][x];
-            // for now let's just turn 255 into 1
-            cells[y][x] &= 0x01;
-        }
-    }
-    for (int y = 1; y < WORKER_ROWS + 1; y++) {
-        for (int x = 0; x < IMWD; x++) {
-            // neighbour cells coords
-            int u = y - 1,
-                d = y + 1,
-                l = mod(x - 1, IMWD),
-                r = mod(x + 1, IMWD);
-            char neighbours = cells[u][l] + cells[u][x] + cells[u][r]
-                            + cells[y][l]               + cells[y][r]
-                            + cells[d][l] + cells[d][x] + cells[d][r];
-            uchar next = next_cell(neighbours, cells[y][x]) * 255;
-            work_out <: next;
-        }
-    }
-}
+    while(1){
+        uchar cells[WORKER_ROWS + 2][IMWD];
+        uchar processed[WORKER_ROWS][IMWD];
+        uchar sem;
 
-//Later add generality using the number of workers
-void collector(chanend c_out, chanend work_out[]){
-    uchar val;
-    for (int y = 0; y < IMHT/2; y++){
-        for (int x = 0; x < IMWD; x++){
-            work_out[0] :> val;
-            c_out <: val;
-        }
-    }
-    
-    for (int y = 0; y < IMHT/2; y++){
-        for (int x = 0; x < IMWD; x++){
-            work_out[1] :> val;
-            c_out <: val;
-        }
-    }
-}
-
-//The worker will recieve the cells it works on plus a 'ghost row' at the top and bottom and 
-//a ghost collumn on the left and right. The height must take this into account but modular arithmetic 
-//is used for the width so the width shouldn't
-void worker(chanend work_in, chanend work_out, int height, int width){
-    uchar vals[10][16];
-    uchar val;
-    for (int y = 0; y < height; y++){
-        for(int x = 0; x < width; x++ ){
-            work_in :> val;
-            vals[y][x] = val;
-        }
-    }
-    for (int y = 0; y < height-2; y++){
-            for(int x = 0; x < width; x++ ){
-                    work_out <:(uchar)( vals[y][x] ^ 0xFF );
+        // turns out the chan :> arr works but the IDE complains
+        for (int y = 0; y < WORKER_ROWS + 2; y++) {
+            for (int x = 0; x < IMWD; x++) {
+                work_in :> cells[y][x];
+                // for now let's just turn 255 into 1
+                cells[y][x] &= 0x01;
             }
+        }
+        for (int y = 1; y < WORKER_ROWS + 1 ; y++) {
+            for (int x = 0; x < IMWD; x++) {
+                // neighbour cells coords
+                int u = y - 1,
+                    d = y + 1,
+                    l = mod(x - 1, IMWD),
+                    r = mod(x + 1, IMWD);
+                char neighbours = cells[u][l] + cells[u][x] + cells[u][r]
+                                + cells[y][l]               + cells[y][r]
+                                + cells[d][l] + cells[d][x] + cells[d][r];
+                processed[y-1][x] = next_cell(neighbours, cells[y][x]) * 255;
+            }
+        }
+
+        printf("give sem pls\n");
+        //Wait for semaphore from the distributor
+        work_in :> sem;
+        printf("thank");
+        for (int y = 0; y < WORKER_ROWS; y++){
+            for (int x = 0; x < IMWD; x++){
+                work_out <: processed[y][x];
+                printf("sent");
+            }
+        }
+        work_in <: sem;
     }
 }
+
+
+
 
 /////////////////////////////////////////////////////////////////////////////////////////
 //
@@ -147,9 +130,8 @@ void worker(chanend work_in, chanend work_out, int height, int width){
 // Currently the function just inverts the image
 //
 /////////////////////////////////////////////////////////////////////////////////////////
-void distributor(chanend c_in, chanend fromAcc,chanend work_in[])
+void distributor(chanend c_in, chanend fromAcc, chanend work_in[])
 {
-  uchar val;
   //Starting up and wait for tilting of the xCore-200 Explorer
   printf( "ProcessImage: Start, size = %dx%d\n", IMHT, IMWD );
   printf( "Waiting for Board Tilt...\n" );
@@ -158,22 +140,46 @@ void distributor(chanend c_in, chanend fromAcc,chanend work_in[])
   //Read in and do something with your image values..
   //This just inverts every pixel, but you should
   //change the image according to the "Game of Life"
- printf( "Processing...\n" );
-   for( int y = 0; y < IMHT; y++ ) {   //go through all lines
-        for( int x = 0; x < IMWD; x++ ) { //go through each pixel per line
-          c_in :> val;
-          
-          //Conditionally send work to channels including ghost rows
-          if (y <= (IMHT/2) || y == IMHT - 1){
-              work_in[0] <: val;
-          }
-          if (y >= (IMHT/2) || y == 0){
+  uchar instate[IMHT][IMWD];
+  uchar outstate[IMHT][IMWD];
+  uchar sem = 1;
+
+     printf( "Processing...\n" );
+       for( int y = 0; y < IMHT; y++ ) {   //go through all lines
+            for( int x = 0; x < IMWD; x++ ) { //go through each pixel per line
+              c_in :> instate[y][x];
+            }
+       }
+       while(1){
+       //Conditionally send work to channels including ghost rows
+           for (int y = 0; y < (IMHT*2); y++){
+               par{
+                 if ((y >= (IMHT) && y<=(IMHT+(IMHT/2))) || (y == IMHT-1)){
+                     for(int x = 0; x <IMWD; x++){
+                         work_in[0] <: instate[y%IMHT][x];
+                     }
+
+                 }
+                 if (y > ((IMHT/2)-2) && (y <= IMHT)){
+                     for(int x = 0; x <IMWD; x++){
+                         work_in[1] <: instate[y%IMHT][x];
+                     }
+                 }
+               }
+           }
+           printf("I can send a semaphore \n");
+
+           for (int i = 0; i < WORKERS; i++){
+               printf("i am about to sem on %d\n", i);
+               work_in[0] <: sem;
+               printf("i have semmed on %d",i);
+               work_in[0] :> sem;
+               printf("i have been semmed on");
+           }
+       }
+
               
-              work_in[1] <: val;
-          }
-          
-        }
-      }
+
   printf( "\nOne processing round completed...\n" );
 }
 
@@ -182,9 +188,10 @@ void distributor(chanend c_in, chanend fromAcc,chanend work_in[])
 // Write pixel stream from channel c_in to PGM image file
 //
 /////////////////////////////////////////////////////////////////////////////////////////
-void DataOutStream(char outfname[], chanend c_in)
+void DataOutStream(char outfname[], chanend c_in[WORKERS])
 {
   int res;
+  int serving = 1;
   uchar line[ IMWD ];
 
   //Open PGM file
@@ -197,9 +204,20 @@ void DataOutStream(char outfname[], chanend c_in)
 
   //Compile each line of the image and write the image line-by-line
   for( int y = 0; y < IMHT; y++ ) {
-    for( int x = 0; x < IMWD; x++ ) {
-      c_in :> line[ x ];
-    }
+      for( int x = 0; x < IMWD; x++ ) {
+          serving = 1;
+          while (serving)
+
+            select{
+                case c_in[int j] :> line[x]:
+                    printf("i server\n");
+                    serving = 0;
+                    return;
+                default:
+                    return;
+            }
+          }
+
     _writeoutline( line, IMWD );
     printf( "DataOutStream: Line written...\n" );
   }
@@ -265,23 +283,17 @@ i2c_master_if i2c[1];               //interface to orientation
 //int workers = 2;
 char infname[] = "test.pgm";     //put your input image path here
 char outfname[] = "testout.pgm"; //put your output image path here
-chan c_inIO, c_outIO, c_control, work_in[2],work_out[2];    //extend your channel definitions here
+chan c_inIO, c_control, work_in[WORKERS],work_out[WORKERS];    //extend your channel definitions here
 
 par {
     i2c_master(i2c, 1, p_scl, p_sda, 10);   //server thread providing orientation data
     orientation(i2c[0],c_control);        //client thread reading orientation data
     DataInStream(infname, c_inIO);          //thread to read in a PGM image
-    DataOutStream(outfname, c_outIO);       //thread to write out a PGM image
-    distributor(c_inIO, c_control,work_in);//thread to coordinate work on image
-//    par (int i = 0; i < 2; i++){
-//        worker(work_in[i],work_out[i],(IMHT/2)+2,IMWD+2);
-//    }
-    
-    //worker(work_in[0],work_out[0],(IMHT/2)+2,IMWD);
-    //worker(work_in[1],work_out[1],(IMHT/2)+2,IMWD);
+    DataOutStream(outfname, work_out);       //thread to write out a PGM image
+    distributor(c_inIO, c_control, work_in);//thread to coordinate work on image
     conway_worker(work_in[0], work_out[0]);
     conway_worker(work_in[1], work_out[1]);
-    collector(c_outIO, work_out);
+    //collector(c_outIO, work_out, "testout.pgm", filepipe );
     
   }
 
