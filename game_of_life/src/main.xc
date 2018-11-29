@@ -77,46 +77,66 @@ uchar next_cell(int neighbours, char cell) {
 
 //The worker will recieve the cells it works on plus a 'ghost row' at the top and bottom and
 //a ghost collumn on the left and right. The height must take this into account but modular arithmetic
-//is used for the width so the width shouldn't. Worker communicates directly with data out using sem
+//is used for the width so the width shouldn't. Worker communicates directly with data out using flag
 void conway_worker(chanend work_in, chanend work_out) {
-    while(1){
-        uchar cells[WORKER_ROWS + 2][IMWD];
-        uchar processed[WORKER_ROWS][IMWD];
-        uchar sem;
 
-        // turns out the chan :> arr works but the IDE complains
-        for (int y = 0; y < WORKER_ROWS + 2; y++) {
-            for (int x = 0; x < IMWD; x++) {
-                work_in :> cells[y][x];
-                // for now let's just turn 255 into 1
-                cells[y][x] &= 0x01;
-            }
-        }
-        for (int y = 1; y < WORKER_ROWS + 1 ; y++) {
-            for (int x = 0; x < IMWD; x++) {
-                // neighbour cells coords
-                int u = y - 1,
-                    d = y + 1,
-                    l = mod(x - 1, IMWD),
-                    r = mod(x + 1, IMWD);
-                char neighbours = cells[u][l] + cells[u][x] + cells[u][r]
-                                + cells[y][l]               + cells[y][r]
-                                + cells[d][l] + cells[d][x] + cells[d][r];
-                processed[y-1][x] = next_cell(neighbours, cells[y][x]) * 255;
-            }
-        }
+    uchar cells[WORKER_ROWS + 2][IMWD];
+    uchar processed[WORKER_ROWS][IMWD];
+    uchar flag;
 
-        printf("give sem pls\n");
-        //Wait for semaphore from the distributor
-        work_in :> sem;
-        printf("thank");
-        for (int y = 0; y < WORKER_ROWS; y++){
-            for (int x = 0; x < IMWD; x++){
-                work_out <: processed[y][x];
-                printf("sent");
-            }
+    // First time setup of cells
+    for (int y = 0; y < WORKER_ROWS + 2; y++) {
+        for (int x = 0; x < IMWD; x++) {
+            work_in :> cells[y][x];
+            // for now let's just turn 255 into 1
+            cells[y][x] &= 0x01;
         }
-        work_in <: sem;
+    }
+        while(1){
+            for (int y = 1; y < WORKER_ROWS + 1 ; y++) {
+                for (int x = 0; x < IMWD; x++) {
+                    // neighbour cells coords
+                    int u = y - 1,
+                        d = y + 1,
+                        l = mod(x - 1, IMWD),
+                        r = mod(x + 1, IMWD);
+                    char neighbours = cells[u][l] + cells[u][x] + cells[u][r]
+                                    + cells[y][l]               + cells[y][r]
+                                    + cells[d][l] + cells[d][x] + cells[d][r];
+                    processed[y-1][x] = next_cell(neighbours, cells[y][x]) * 255;
+                }
+            }
+
+            //Wait for flag from the distributor
+            work_in :> flag;
+            for (int y = 0; y < WORKER_ROWS; y++){
+                for (int x = 0; x < IMWD; x++){
+                    work_out <: processed[y][x];
+                }
+            }
+            work_in <: flag;
+
+
+            //send redundant rows
+            for (int y = 0; y < WORKER_ROWS; y += (WORKER_ROWS -1)){
+                for (int x = 0; x < IMWD; x++){
+                            work_in <: processed[y][x];
+                        }
+            }
+
+            //accept redundant rows
+            for (int y = 0; y < WORKER_ROWS + 2; y += (WORKER_ROWS)+1){
+                for (int x = 0; x < IMWD; x++){
+                            work_in :> cells[y][x];
+                            cells[y][x] &= 0x01;
+                        }
+            }
+            for (int y = 1; y < WORKER_ROWS+1; y++){
+                for (int x = 0; x < IMWD; x++){
+                    cells[y][x] = processed[y-1][x];
+                    cells[y][x] &= 0x01;
+                }
+             }
     }
 }
 
@@ -141,8 +161,9 @@ void distributor(chanend c_in, chanend fromAcc, chanend work_in[])
   //This just inverts every pixel, but you should
   //change the image according to the "Game of Life"
   uchar instate[IMHT][IMWD];
-  uchar outstate[IMHT][IMWD];
-  uchar sem = 1;
+  uchar redundant[WORKERS*2][IMWD];
+  //Contains 0,7,8,15
+  uchar flag = 1;
 
      printf( "Processing...\n" );
        for( int y = 0; y < IMHT; y++ ) {   //go through all lines
@@ -150,7 +171,6 @@ void distributor(chanend c_in, chanend fromAcc, chanend work_in[])
               c_in :> instate[y][x];
             }
        }
-       while(1){
        //Conditionally send work to channels including ghost rows
            for (int y = 0; y < (IMHT*2); y++){
                par{
@@ -160,27 +180,42 @@ void distributor(chanend c_in, chanend fromAcc, chanend work_in[])
                      }
 
                  }
-                 if (y > ((IMHT/2)-2) && (y <= IMHT)){
+                 if (y >= ((IMHT/2)-1) && (y <= IMHT)){
                      for(int x = 0; x <IMWD; x++){
                          work_in[1] <: instate[y%IMHT][x];
                      }
                  }
                }
            }
-           printf("I can send a semaphore \n");
 
-           for (int i = 0; i < WORKERS; i++){
-               printf("i am about to sem on %d\n", i);
-               work_in[0] <: sem;
-               printf("i have semmed on %d",i);
-               work_in[0] :> sem;
-               printf("i have been semmed on");
+           while (1){
+               //Transfer flag for writing to stdout
+               for (int i = 0; i < WORKERS; i++){
+                   work_in[i] <: flag;
+                   work_in[i] :> flag;
+                   //Transfer redundant rows
+                   for (int y = 0; y < 2; y++){
+                       for (int x = 0; x < IMWD; x++){
+                           work_in[i] :> redundant[(2*i)+y][x];
+                       }
+                   }
+               }
+
+               for (int i = 0; i < WORKERS; i++){
+                   for (signed int y = (2*i) - 1; y < (2*i)+3; y += 3){
+                       for (int x = 0; x < IMWD; x++){
+                           work_in[i] <: redundant[mod(y,(WORKERS*2))][x];
+                       }
+                   }
+
+               }
+               printf( "\nOne processing round completed...\n" );fflush(stdout);
+
            }
-       }
 
               
 
-  printf( "\nOne processing round completed...\n" );
+
 }
 
 /////////////////////////////////////////////////////////////////////////////////////////
@@ -194,6 +229,7 @@ void DataOutStream(char outfname[], chanend c_in[WORKERS])
   int serving = 1;
   uchar line[ IMWD ];
 
+  while(1){
   //Open PGM file
   printf( "DataOutStream: Start...\n" );
   res = _openoutpgm( outfname, IMWD, IMHT );
@@ -202,29 +238,34 @@ void DataOutStream(char outfname[], chanend c_in[WORKERS])
     return;
   }
 
+  //Refactor me now
   //Compile each line of the image and write the image line-by-line
   for( int y = 0; y < IMHT; y++ ) {
       for( int x = 0; x < IMWD; x++ ) {
+
           serving = 1;
-          while (serving)
+          while (serving){
 
             select{
                 case c_in[int j] :> line[x]:
-                    printf("i server\n");
                     serving = 0;
-                    return;
-                default:
-                    return;
+                    break;
             }
+          }
           }
 
     _writeoutline( line, IMWD );
-    printf( "DataOutStream: Line written...\n" );
+    //printf( "DataOutStream: Line written...\n" );
+    for (int i = 0; i<IMWD; i++){
+        printf(" %d ",line[i] & 0x01);
+    }
+    printf("\n");
   }
 
   //Close the PGM image
   _closeoutpgm();
   printf( "DataOutStream: Done...\n" );
+  }
   return;
 }
 
