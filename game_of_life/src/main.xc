@@ -9,12 +9,17 @@
 
 #define IMHT 16                  //image height
 #define IMWD 16                  //image width
-#define WORKERS 2
+#define WORKERS 4
 #define WORKER_ROWS (IMHT / WORKERS)
+#define infname  "test.pgm"     //put your input image path here
+#define outfname "testout.pgm" //put your output image path here
 typedef unsigned char uchar;      //using uchar as shorthand
 
-port p_scl = XS1_PORT_1E;         //interface ports to orientation
-port p_sda = XS1_PORT_1F;
+on tile[0]: in port buttons = XS1_PORT_4E; //port to access xCore-200 buttons
+on tile[0]: out port leds = XS1_PORT_4F;   //port to access xCore-200 LEDs
+
+on tile[0]: port p_scl = XS1_PORT_1E;         //interface ports to orientation
+on tile[0]: port p_sda = XS1_PORT_1F;
 
 #define FXOS8700EQ_I2C_ADDR 0x1E  //register addresses for orientation
 #define FXOS8700EQ_XYZ_DATA_CFG_REG 0x0E
@@ -32,7 +37,7 @@ port p_sda = XS1_PORT_1F;
 // Read Image from PGM file from path infname[] to channel c_out
 //
 /////////////////////////////////////////////////////////////////////////////////////////
-void DataInStream(char infname[], chanend c_out)
+void DataInStream(char inname[], chanend c_out)
 {
   int res;
   uchar line[ IMWD ];
@@ -109,9 +114,11 @@ void conway_worker(chanend work_in, chanend work_out) {
 
             //Wait for flag from the distributor
             work_in :> flag;
-            for (int y = 0; y < WORKER_ROWS; y++){
-                for (int x = 0; x < IMWD; x++){
-                    work_out <: processed[y][x];
+            if (flag == 1){
+                for (int y = 0; y < WORKER_ROWS; y++){
+                    for (int x = 0; x < IMWD; x++){
+                        work_out <: processed[y][x];
+                    }
                 }
             }
             work_in <: flag;
@@ -150,12 +157,19 @@ void conway_worker(chanend work_in, chanend work_out) {
 // Currently the function just inverts the image
 //
 /////////////////////////////////////////////////////////////////////////////////////////
-void distributor(chanend c_in, chanend fromAcc, chanend work_in[])
+void distributor(chanend c_in, chanend fromAcc, chanend work_in[], chanend fromListener, chanend distributorToVisualiser)
 {
+  int value = 1;
+  int rounds = 0;
+  int tilted = 0;
+
   //Starting up and wait for tilting of the xCore-200 Explorer
   printf( "ProcessImage: Start, size = %dx%d\n", IMHT, IMWD );
-  printf( "Waiting for Board Tilt...\n" );
-  fromAcc :> int value;
+  printf( "Waiting for SW1...\n" );
+  while (value != 14)
+  fromListener :> value;
+  distributorToVisualiser <: 1;
+
 
   //Read in and do something with your image values..
   //This just inverts every pixel, but you should
@@ -171,24 +185,45 @@ void distributor(chanend c_in, chanend fromAcc, chanend work_in[])
               c_in :> instate[y][x];
             }
        }
-       //Conditionally send work to channels including ghost rows
-           for (int y = 0; y < (IMHT*2); y++){
-               par{
-                 if ((y >= (IMHT) && y<=(IMHT+(IMHT/2))) || (y == IMHT-1)){
-                     for(int x = 0; x <IMWD; x++){
-                         work_in[0] <: instate[y%IMHT][x];
-                     }
 
-                 }
-                 if (y >= ((IMHT/2)-1) && (y <= IMHT)){
-                     for(int x = 0; x <IMWD; x++){
-                         work_in[1] <: instate[y%IMHT][x];
-                     }
-                 }
-               }
+       for (int i = 0; i < WORKERS; i++){
+           for (int x = 0; x < IMWD; x++)
+               work_in[i] <: instate[mod((i * WORKER_ROWS) - 1, IMHT)][x];
+           for (int y = (WORKER_ROWS * i); y <= (WORKER_ROWS * (i+1)); y++){
+               for (int x = 0; x < IMWD; x++)
+
+                  work_in[i] <: instate[y % IMHT][x];
            }
 
+       }
+//       //Conditionally send work to channels including ghost rows
+//           for (int y = 0; y < (IMHT*2); y++){
+//               par{
+//                 if ((y >= (IMHT) && y<=(IMHT+(IMHT/2))) || (y == IMHT-1)){
+//                     for(int x = 0; x <IMWD; x++){
+//                         work_in[0] <: instate[y%IMHT][x];
+//                     }
+//
+//                 }
+//                 if (y >= ((IMHT/2)-1) && (y <= IMHT)){
+//                     for(int x = 0; x <IMWD; x++){
+//                         work_in[1] <: instate[y%IMHT][x];
+//                     }
+//                 }
+//               }
+//           }
+
            while (1){
+               select{
+                   case fromListener :> int button:
+                       flag = button & 0x1;
+                       break;
+                   default:
+                       flag = 0;
+                       break;
+
+               }
+               distributorToVisualiser <: (int)(flag * 2) + ((rounds+1)%2);
                //Transfer flag for writing to stdout
                for (int i = 0; i < WORKERS; i++){
                    work_in[i] <: flag;
@@ -200,6 +235,7 @@ void distributor(chanend c_in, chanend fromAcc, chanend work_in[])
                        }
                    }
                }
+               distributorToVisualiser <: ((rounds+1)%2);
 
                for (int i = 0; i < WORKERS; i++){
                    for (signed int y = (2*i) - 1; y < (2*i)+3; y += 3){
@@ -209,7 +245,19 @@ void distributor(chanend c_in, chanend fromAcc, chanend work_in[])
                    }
 
                }
+               rounds++;
+               distributorToVisualiser <: ((rounds+1)%2);
+
                printf( "\nOne processing round completed...\n" );fflush(stdout);
+               fromAcc <: 1;
+               fromAcc :> tilted;
+               if (tilted == 1){
+                   distributorToVisualiser <: ((rounds+1)%2) + 8;
+                   while (tilted == 1)
+                       fromAcc :> tilted;
+                   distributorToVisualiser <: ((rounds+1)%2);
+               }
+
 
            }
 
@@ -223,10 +271,10 @@ void distributor(chanend c_in, chanend fromAcc, chanend work_in[])
 // Write pixel stream from channel c_in to PGM image file
 //
 /////////////////////////////////////////////////////////////////////////////////////////
-void DataOutStream(char outfname[], chanend c_in[WORKERS])
+void DataOutStream(char outname[], chanend c_in[WORKERS])
 {
   int res;
-  int serving = 1;
+  int serving;
   uchar line[ IMWD ];
 
   while(1){
@@ -238,7 +286,6 @@ void DataOutStream(char outfname[], chanend c_in[WORKERS])
     return;
   }
 
-  //Refactor me now
   //Compile each line of the image and write the image line-by-line
   for( int y = 0; y < IMHT; y++ ) {
       for( int x = 0; x < IMWD; x++ ) {
@@ -257,7 +304,7 @@ void DataOutStream(char outfname[], chanend c_in[WORKERS])
     _writeoutline( line, IMWD );
     //printf( "DataOutStream: Line written...\n" );
     for (int i = 0; i<IMWD; i++){
-        printf(" %d ",line[i] & 0x01);
+        printf(" %d ",line[i] & 0x1);
     }
     printf("\n");
   }
@@ -278,6 +325,7 @@ void orientation( client interface i2c_master_if i2c, chanend toDist) {
   i2c_regop_res_t result;
   char status_data = 0;
   int tilted = 0;
+  int flag;
 
   // Configure FXOS8700EQ
   result = i2c.write_reg(FXOS8700EQ_I2C_ADDR, FXOS8700EQ_XYZ_DATA_CFG_REG, 0x01);
@@ -291,26 +339,64 @@ void orientation( client interface i2c_master_if i2c, chanend toDist) {
     printf("I2C write reg failed\n");
   }
 
-  //Probe the orientation x-axis forever
   while (1) {
+      toDist :> flag;
+  //Probe the orientation x-axis forever
+      while (1) {
+        //check until new orientation data is available
+        do {
+          status_data = i2c.read_reg(FXOS8700EQ_I2C_ADDR, FXOS8700EQ_DR_STATUS, result);
+        } while (!status_data & 0x08);
 
-    //check until new orientation data is available
-    do {
-      status_data = i2c.read_reg(FXOS8700EQ_I2C_ADDR, FXOS8700EQ_DR_STATUS, result);
-    } while (!status_data & 0x08);
+        //get new x-axis tilt value
+        int x = read_acceleration(i2c, FXOS8700EQ_OUT_X_MSB);
 
-    //get new x-axis tilt value
-    int x = read_acceleration(i2c, FXOS8700EQ_OUT_X_MSB);
-
-    //send signal to distributor after first tilt
-    if (!tilted) {
-      if (x>30) {
-        tilted = 1 - tilted;
-        toDist <: 1;
+        //send signal to distributor after first tilt
+        tilted = x >30 ? 1:0;
+        toDist <: tilted;
+        if (!tilted)
+            break;
+        }
       }
+}
+
+
+//DISPLAYS an LED pattern
+int showLEDs(out port p, chanend fromVisualiser) {
+  int pattern; //1st bit...separate green LED
+               //2nd bit...blue LED
+               //3rd bit...green LED
+               //4th bit...red LED
+  while (1) {
+    fromVisualiser :> pattern;   //receive new pattern from visualiser
+    p <: pattern;                //send pattern to LED port
+  }
+  return 0;
+}
+
+//READ BUTTONS and send button pattern to distributor
+void buttonListener(in port b, chanend toDistributor) {
+  int r;
+
+  while (1) {
+    b when pinseq(15)  :> r;    // check that no button is pressed
+    b when pinsneq(15) :> r;
+    if ((r==13) || (r==14)){     // if either button is pressed
+        toDistributor <: r;             // send button pattern to userAnt
     }
   }
 }
+
+void visualiser(chanend visualiserToLEDs, chanend distributorToVisualiser){
+    int pattern;
+    while (1) {
+        distributorToVisualiser :> pattern;
+        //pattern = round%2 + 8 * dangerzone + 2 * ((distance==1) || (distance==-1));
+        //if ((attackerAntToDisplay>7)&&(attackerAntToDisplay<15)) pattern = 15;
+        visualiserToLEDs <: pattern;
+      }
+}
+
 
 /////////////////////////////////////////////////////////////////////////////////////////
 //
@@ -322,19 +408,28 @@ int main(void) {
 i2c_master_if i2c[1];               //interface to orientation
 
 //int workers = 2;
-char infname[] = "test.pgm";     //put your input image path here
-char outfname[] = "testout.pgm"; //put your output image path here
-chan c_inIO, c_control, work_in[WORKERS],work_out[WORKERS];    //extend your channel definitions here
+chan c_inIO,
+     c_control,
+     work_in[WORKERS],
+     work_out[WORKERS],
+     visualiserToLEDs,
+     buttonsToDistributor,
+     distributorToVisualiser;    //extend your channel definitions here
 
 par {
-    i2c_master(i2c, 1, p_scl, p_sda, 10);   //server thread providing orientation data
-    orientation(i2c[0],c_control);        //client thread reading orientation data
-    DataInStream(infname, c_inIO);          //thread to read in a PGM image
-    DataOutStream(outfname, work_out);       //thread to write out a PGM image
-    distributor(c_inIO, c_control, work_in);//thread to coordinate work on image
-    conway_worker(work_in[0], work_out[0]);
-    conway_worker(work_in[1], work_out[1]);
-    //collector(c_outIO, work_out, "testout.pgm", filepipe );
+    on tile[0]: i2c_master(i2c, 1, p_scl, p_sda, 10);   //server thread providing orientation data
+    on tile[0]: orientation(i2c[0],c_control);        //client thread reading orientation data
+    on tile[1]: DataInStream(infname, c_inIO);          //thread to read in a PGM image
+    on tile[1]: DataOutStream(outfname, work_out);       //thread to write out a PGM image
+    on tile[0]: distributor(c_inIO, c_control, work_in,buttonsToDistributor,distributorToVisualiser);//thread to coordinate work on image
+    par(int i = 0; i < WORKERS; i++){
+        on tile[1]: conway_worker(work_in[i], work_out[i]);
+    }
+    //on tile[1]: conway_worker(work_in[0], work_out[0]);
+    //on tile[1]: conway_worker(work_in[1], work_out[1]);
+    on tile[0]: buttonListener(buttons, buttonsToDistributor);
+    on tile[0]: visualiser(visualiserToLEDs,distributorToVisualiser);
+    on tile[0]: showLEDs(leds,visualiserToLEDs);
     
   }
 
