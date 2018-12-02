@@ -3,7 +3,7 @@
 #include <stdbool.h>
 
 //Turns a list of 32 chars into a single 32bit int
-int pack(char chars[32])
+int pack_a(char chars[32])
 {
     int out = 0;
     
@@ -13,7 +13,7 @@ int pack(char chars[32])
     return out;    
 }
 
-void unpack(char* out,int packed)
+void unpack_a(char* out,int packed)
 {
 
     for (int i = 0; i<32; i++)
@@ -26,7 +26,7 @@ bool test_bits()
 {
     char testdata[32] = {0,255,0,255,0,0,0,0,0,0,0,255,0,0,0,0,0,255,0,0,0,0,0,255,0,0,0,0,255,0,255,0};
     char processeddata[32];
-    unpack(processeddata,pack(testdata));
+    unpack_a(processeddata,pack_a(testdata));
     for (int i = 0; i<32; i++){
         assert(testdata[i] == processeddata[i]);
     }
