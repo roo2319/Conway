@@ -7,13 +7,13 @@
 #include <stdint.h>
 #include "pgmIO.h"
 #include "i2c.h"
-#define IMHT 1024                 //image height
-#define IMWD 1024               //image width
-#define WORKERS 8
+#define IMHT 64                 //image height
+#define IMWD 64               //image width
+#define WORKERS 4
 #define WORKER_ROWS (IMHT / WORKERS)
 #define PACKED_WD (IMWD / 32)
-#define infname  "test1024.pgm"     //put your input image path here
-#define outfname "testout1024.pgm" //put your output image path here
+#define infname  "test64.pgm"     //put your input image path here
+#define outfname "testout64.pgm" //put your output image path here
 typedef unsigned char uchar;      //using uchar as shorthand
 typedef uint32_t uint32;
 
@@ -114,6 +114,7 @@ void conway_worker(chanend work_in, chanend work_out) {
 
     printf("%u\n", sizeof(cells));
     while(1){
+        uint32 alive_cells = 0;
         for (short y = 1; y < WORKER_ROWS + 1 ; y++) {
             uint32 processed[PACKED_WD] = {0};
             for (short x = 0; x < PACKED_WD; x++) {
@@ -128,7 +129,9 @@ void conway_worker(chanend work_in, chanend work_out) {
                     uchar neighbours = ((cells[u_row][l_pack] >> l) & 0x1) + ((cells[u_row][x] >> c) & 0x1) + ((cells[u_row][r_pack] >> r) & 0x1)
                                      + ((cells[y][l_pack]     >> l) & 0x1) +                                + ((cells[y][r_pack]     >> r) & 0x1)
                                      + ((cells[d_row][l_pack] >> l) & 0x1) + ((cells[d_row][x] >> c) & 0x1) + ((cells[d_row][r_pack] >> r) & 0x1);
-                    processed[x] |= (next_cell(neighbours, (cells[y][x] >> c) & 0x1) << (31 - i));
+                    uchar next = next_cell(neighbours, (cells[y][x] >> c) & 0x1);
+                    alive_cells += next;
+                    processed[x] |= (next << (31 - i));
                 }
             }
             for (short i = 0; i < PACKED_WD; i++) {
@@ -146,7 +149,7 @@ void conway_worker(chanend work_in, chanend work_out) {
             }
         }
         // send back to signal done
-        work_in <: export;
+        work_in <: alive_cells;
 
         // send ghost rows to dist for other workers
         for (short x = 0; x < PACKED_WD; x++){
@@ -189,6 +192,7 @@ void distributor(chanend c_in, chanend fromAcc, chanend work_in[], chanend fromL
 
     uint32 instate[IMHT][PACKED_WD];
     uint32 redundant[WORKERS*2][PACKED_WD];
+    uint32 total_cells;
     //Contains 0,7,8,15
     uchar flag = 1;
 
@@ -226,9 +230,12 @@ void distributor(chanend c_in, chanend fromAcc, chanend work_in[], chanend fromL
         }
         distributorToVisualiser <: (int)(flag * 2) + ((rounds+1)%2);
         //Transfer flag for writing to stdout
+        total_cells = 0;
         for (int i = 0; i < WORKERS; i++){
             work_in[i] <: flag;
-            work_in[i] :> flag;
+            uint32 cells;
+            work_in[i] :> cells;
+            total_cells += cells;
             //Transfer redundant rows
             for (int y = 0; y < 2; y++){
                 for (int x = 0; x < PACKED_WD; x++){
@@ -256,7 +263,7 @@ void distributor(chanend c_in, chanend fromAcc, chanend work_in[], chanend fromL
             uint32 time;
             toTimer <: 1;
             toTimer :> time;
-            printf("Processing stopped...\nGeneration: %u, Time Elapsed: %u ms\n", rounds, time);
+            printf("Processing stopped...\nGeneration: %u, Time Elapsed: %u ms, Alive: %u\n", rounds, time, total_cells);
             while (tilted == 1)
                fromAcc :> tilted;
             distributorToVisualiser <: ((rounds+1)%2);
