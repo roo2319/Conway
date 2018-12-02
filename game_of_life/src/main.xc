@@ -7,13 +7,13 @@
 #include <stdint.h>
 #include "pgmIO.h"
 #include "i2c.h"
-#define IMHT 128                 //image height
-#define IMWD 128                 //image width
-#define WORKERS 4
+#define IMHT 1024                 //image height
+#define IMWD 1024               //image width
+#define WORKERS 8
 #define WORKER_ROWS (IMHT / WORKERS)
 #define PACKED_WD (IMWD / 32)
-#define infname  "test128.pgm"     //put your input image path here
-#define outfname "testout128.pgm" //put your output image path here
+#define infname  "test1024.pgm"     //put your input image path here
+#define outfname "testout1024.pgm" //put your output image path here
 typedef unsigned char uchar;      //using uchar as shorthand
 typedef uint32_t uint32;
 
@@ -70,11 +70,8 @@ void DataInStream(char inname[], chanend c_out)
   for( int y = 0; y < IMHT; y++ ) {
     _readinline( line, IMWD );
     for( int x = 0; x < PACKED_WD; x++ ) {
-      // c_out <: line[x];
-      // printf( "-%4.1d ", line[ x ] ); //show image values
         uint32 packed = pack(&line[x * 32]);
         c_out <: packed;
-        // printf("%u\n", packed);
     }
     //printf( "\n" );
   }
@@ -104,90 +101,80 @@ uint32 next_cell(int neighbours, char cell) {
 //a ghost collumn on the left and right. The height must take this into account but modular arithmetic
 //is used for the width so the width shouldn't. Worker communicates directly with data out using flag
 void conway_worker(chanend work_in, chanend work_out) {
-
     uint32 cells[WORKER_ROWS + 2][PACKED_WD];
-    uint32 processed[WORKER_ROWS][PACKED_WD];
-
-    // uchar cells[WORKER_ROWS + 2][IMWD];
-    // uchar processed[WORKER_ROWS][IMWD];
-
-    uchar flag;
+    //uint32 processed[WORKER_ROWS][PACKED_WD];
+    uchar export;
 
     // First time setup of cells
-    for (int y = 0; y < WORKER_ROWS + 2; y++) {
-        for (int x = 0; x < PACKED_WD; x++) {
+    for (short y = 0; y < WORKER_ROWS + 2; y++) {
+        for (short x = 0; x < PACKED_WD; x++) {
             work_in :> cells[y][x];
-            // for now let's just turn 255 into 1
-            // cells[y][x] &= 0x01;
         }
     }
 
+    printf("%u\n", sizeof(cells));
     while(1){
-        for (int y = 1; y < WORKER_ROWS + 1 ; y++) {
-            for (int x = 0; x < PACKED_WD; x++) {
-                // neighbour cells coords
-                //int u = y - 1,
-                //    d = y + 1,
-                //    l = mod(x - 1, IMWD),
-                //    r = mod(x + 1, IMWD);
-                //char neighbours = cells[u][l] + cells[u][x] + cells[u][r]
-                //                + cells[y][l]               + cells[y][r]
-                //                + cells[d][l] + cells[d][x] + cells[d][r];
-                //processed[y-1][x] = next_cell(neighbours, cells[y][x]) * 255;0
-                uint32 u_row = y - 1,
-                       d_row = y + 1;
-                processed[y-1][x] = 0;
-                for (int i = 0; i < 32; i++) {
+        for (short y = 1; y < WORKER_ROWS + 1 ; y++) {
+            uint32 processed[PACKED_WD] = {0};
+            for (short x = 0; x < PACKED_WD; x++) {
+                uint32 u_row = y - 1, d_row = y + 1;
+                for (uchar i = 0; i < 32; i++) {
+                    // l, c, r represent the shifts to get the neighbouring cell bits
+                    // l_pack and r_pack are the left and right packed bits
+                    // they're usually the same unless the current bit is on the edge of the pack
                     uchar l = mod(-i, 32), c = 31 - i, r = i == 31 ? 31 : 30 - i;
                     uchar l_pack = i == 0 ? mod(x - 1, PACKED_WD) : x;
                     uchar r_pack = i == 31 ? mod(x + 1, PACKED_WD) : x;
                     uchar neighbours = ((cells[u_row][l_pack] >> l) & 0x1) + ((cells[u_row][x] >> c) & 0x1) + ((cells[u_row][r_pack] >> r) & 0x1)
                                      + ((cells[y][l_pack]     >> l) & 0x1) +                                + ((cells[y][r_pack]     >> r) & 0x1)
                                      + ((cells[d_row][l_pack] >> l) & 0x1) + ((cells[d_row][x] >> c) & 0x1) + ((cells[d_row][r_pack] >> r) & 0x1);
-                    processed[y-1][x] |= (next_cell(neighbours, (cells[y][x] >> c) & 0x1) << (31 - i));
+                    processed[x] |= (next_cell(neighbours, (cells[y][x] >> c) & 0x1) << (31 - i));
                 }
+            }
+            for (short i = 0; i < PACKED_WD; i++) {
+                cells[y - 1][i] = processed[i];
             }
         }
 
-        //Wait for flag from the distributor
-        work_in :> flag;
-        if (flag == 1){
-            for (int y = 0; y < WORKER_ROWS; y++){
-                for (int x = 0; x < PACKED_WD; x++){
-                    work_out <: processed[y][x];
+        // wait for export flag, if 1 then send to dataOut
+        work_in :> export;
+        if (export == 1){
+            for (short y = 0; y < WORKER_ROWS; y++){
+                for (short x = 0; x < PACKED_WD; x++){
+                    work_out <: cells[y][x];
                 }
             }
         }
-        work_in <: flag;
-        // TODO: just unroll these cause its unecessary
+        // send back to signal done
+        work_in <: export;
+
         // send ghost rows to dist for other workers
-        for (int x = 0; x < PACKED_WD; x++){
-            work_in <: processed[0][x];
+        for (short x = 0; x < PACKED_WD; x++){
+            work_in <: cells[0][x];
         }
-        for (int x = 0; x < PACKED_WD; x++){
-            work_in <: processed[WORKER_ROWS - 1][x];
+        for (short x = 0; x < PACKED_WD; x++){
+            work_in <: cells[WORKER_ROWS - 1][x];
+        }
+
+        // shift processed rows downwards, ready for ghost rows
+        for (short y = WORKER_ROWS; y > 0; y--) {
+            for (short x = 0; x < PACKED_WD; x++) {
+                cells[y][x] = cells[y - 1][x];
+            }
         }
 
         // accept ghost rows
-        for (int x = 0; x < PACKED_WD; x++){
+        for (short x = 0; x < PACKED_WD; x++){
             work_in :> cells[0][x];
-            //cells[y][x] &= 0x01;
         }
-        for (int x = 0; x < PACKED_WD; x++){
+        for (short x = 0; x < PACKED_WD; x++){
             work_in :> cells[WORKER_ROWS + 1][x];
-            //cells[y][x] &= 0x01;
-        }
-
-        for (int y = 1; y < WORKER_ROWS+1; y++) {
-            for (int x = 0; x < PACKED_WD; x++) {
-                cells[y][x] = processed[y-1][x];
-            }
         }
     }
 }
 
 
-void distributor(chanend c_in, chanend fromAcc, chanend work_in[], chanend fromListener, chanend distributorToVisualiser, chanend toDataOut)
+void distributor(chanend c_in, chanend fromAcc, chanend work_in[], chanend fromListener, chanend distributorToVisualiser, chanend toDataOut, chanend toTimer)
 {
     int value = 1;
     int rounds = 0;
@@ -212,6 +199,8 @@ void distributor(chanend c_in, chanend fromAcc, chanend work_in[], chanend fromL
         }
     }
 
+    // init timer
+    toTimer <: 1;
     for (int i = 0; i < WORKERS; i++){
         for (int x = 0; x < PACKED_WD; x++) {
             work_in[i] <: instate[mod((i * WORKER_ROWS) - 1, IMHT)][x];
@@ -264,9 +253,37 @@ void distributor(chanend c_in, chanend fromAcc, chanend work_in[], chanend fromL
         fromAcc :> tilted;
         if (tilted == 1){
             distributorToVisualiser <: ((rounds+1)%2) + 8;
+            uint32 time;
+            toTimer <: 1;
+            toTimer :> time;
+            printf("Processing stopped...\nGeneration: %u, Time Elapsed: %u ms\n", rounds, time);
             while (tilted == 1)
                fromAcc :> tilted;
             distributorToVisualiser <: ((rounds+1)%2);
+        }
+    }
+}
+
+void time_worker(chanend toDist) {
+    // wait till image is read to initialise timer
+    toDist :> int init;
+    uint32 time, initial;
+    const uint32 period = 100000;
+    timer t;
+
+    t :> time;
+    time /= period;
+    initial = time;
+    while (1) {
+        // update the current time, or send the current time when requested
+        select {
+            // time will store elapsed ms, so multiply by period to get ticks
+            case t when timerafter(time * period) :> void:
+                time += 1;
+                break;
+            case toDist :> int x:
+                toDist <: (time - initial);
+                break;
         }
     }
 }
@@ -361,13 +378,9 @@ void orientation( client interface i2c_master_if i2c, chanend toDist) {
       }
 }
 
-
 //DISPLAYS an LED pattern
 int showLEDs(out port p, chanend fromVisualiser) {
-  int pattern; //1st bit...separate green LED
-               //2nd bit...blue LED
-               //3rd bit...green LED
-               //4th bit...red LED
+  int pattern; // RGB G
   while (1) {
     fromVisualiser :> pattern;   //receive new pattern from visualiser
     p <: pattern;                //send pattern to LED port
@@ -388,17 +401,6 @@ void buttonListener(in port b, chanend toDistributor) {
   }
 }
 
-void visualiser(chanend visualiserToLEDs, chanend distributorToVisualiser){
-    int pattern;
-    while (1) {
-        distributorToVisualiser :> pattern;
-        //pattern = round%2 + 8 * dangerzone + 2 * ((distance==1) || (distance==-1));
-        //if ((attackerAntToDisplay>7)&&(attackerAntToDisplay<15)) pattern = 15;
-        visualiserToLEDs <: pattern;
-      }
-}
-
-
 /////////////////////////////////////////////////////////////////////////////////////////
 //
 // Orchestrate concurrent system and start up all threads
@@ -415,16 +417,18 @@ chan c_inIO,
      work_out[WORKERS],
      buttonsToDistributor,
      distributorToLEDs,
-     distributorToDataOut;    //extend your channel definitions here
+     distributorToDataOut,
+     distributorToTimer;    //extend your channel definitions here
 
 par {
     on tile[0]: i2c_master(i2c, 1, p_scl, p_sda, 10);   //server thread providing orientation data
     on tile[0]: orientation(i2c[0],c_control);        //client thread reading orientation data
-    on tile[1]: DataInStream(infname, c_inIO);          //thread to read in a PGM image
-    on tile[1]: DataOutStream(outfname, work_out, distributorToDataOut);       //thread to write out a PGM image
-    on tile[1]: distributor(c_inIO, c_control, work_in,buttonsToDistributor,distributorToLEDs, distributorToDataOut);//thread to coordinate work on image
+    on tile[0]: DataInStream(infname, c_inIO);          //thread to read in a PGM image
+    on tile[0]: DataOutStream(outfname, work_out, distributorToDataOut);       //thread to write out a PGM image
+    on tile[0]: distributor(c_inIO, c_control, work_in,buttonsToDistributor,distributorToLEDs, distributorToDataOut, distributorToTimer);//thread to coordinate work on image
+    on tile[0]: time_worker(distributorToTimer);
     par(int i = 0; i < WORKERS; i++){
-        on tile[i % 2]: conway_worker(work_in[i], work_out[i]);
+        on tile[1]: conway_worker(work_in[i], work_out[i]);
     }
     on tile[0]: buttonListener(buttons, buttonsToDistributor);
     on tile[0]: showLEDs(leds,distributorToLEDs);
