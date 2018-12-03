@@ -1,0 +1,47 @@
+% This file was created by matplotlib2tikz v0.6.18.
+\begin{tikzpicture}
+
+\definecolor{color0}{rgb}{0.12156862745098,0.466666666666667,0.705882352941177}
+\definecolor{color1}{rgb}{1,0.498039215686275,0.0549019607843137}
+\definecolor{color2}{rgb}{0.172549019607843,0.627450980392157,0.172549019607843}
+
+\begin{axis}[
+legend cell align={left},
+legend entries={{64x64},{128x128},{256x256}},
+legend style={draw=white!80.0!black},
+tick align=outside,
+tick pos=left,
+x grid style={lightgray!92.02614379084967!black},
+xlabel={Workers},
+xmin=0.65, xmax=8.35,
+y grid style={lightgray!92.02614379084967!black},
+ylabel={AGT (ms)},
+ymin=-3.424, ymax=327.544
+]
+\addlegendimage{no markers, color0}
+\addlegendimage{no markers, color1}
+\addlegendimage{no markers, color2}
+\addplot [semithick, color0]
+table [row sep=\\]{%
+1	19.69 \\
+2	11.63 \\
+4	11.64 \\
+8	11.62 \\
+};
+\addplot [semithick, color1]
+table [row sep=\\]{%
+1	77.72 \\
+2	39.27 \\
+4	19.4 \\
+8	15.91 \\
+};
+\addplot [semithick, color2]
+table [row sep=\\]{%
+1	312.5 \\
+2	152.28 \\
+4	77.52 \\
+8	60.36 \\
+};
+\end{axis}
+
+\end{tikzpicture}

@@ -1,12 +1,15 @@
 \documentclass{article}
 
 % packages
-\usepackage[a4paper, margin=2cm]{geometry}
+\usepackage[a4paper, margin=1.8cm]{geometry}
 \usepackage{multicol}
 \usepackage[utf8]{inputenc}
 \usepackage[english]{babel}
 \usepackage{minted}
 \usepackage{pgfplots}
+\usepackage{parskip}
+
+\pgfplotsset{compat=1.16}
 
 \newlength\figurewidth
 \newlength\figureheight
@@ -54,37 +57,21 @@
     
     \begin{figure}
         \begin{center}
-            \input{generations.tex}
+            \input{table.tex} \\
+            \input{scripts/agt.tex}
             \hspace{1cm}
             \input{time.tex}
+            \vspace*{-2mm}
         \end{center}
-        \vspace{-2mm}
-        \caption{Effect of increasing worker count on processing speed.}
+        \vspace{-1mm}
+        \caption{Effect of increasing worker count on processing speed. AGT is Average Generation Time.}
         \label{fig:workers}
     \end{figure}
 
-    Our system can process a \verb|1024x1024| image across 8 workers, and can evolve a single generation of a \verb|256x256| board in 60ms ??. The xCore-200 is harshly limited by its I/O speed (reading of a \verb|1024x1024| file can take many minutes); we chose to use \verb|64x64| to \verb|256x256| in the sample data as it is much faster to read from disk while also able to show trends. Figure \ref{fig:workers} shows that increasing the number of workers also increases the effective processing speed. This relationship is \textit{somewhat} linear: doubling the workers from 1, 2, to 4 on the \verb|128x128| and \verb|256x256| images seem to also halve the average generation time. However, the relationship is weaker for \verb|64x64| and 8 workers across all image sizes, which implies that the system is bottlenecked by some other factor. We believe that it is bottlenecked by both processing speed and channel communication with the distributor, since it needs to collect the `ghost rows' before the generation can advance. \\
+    Our system can maximally process a \verb|1024x1024| image across 8 workers with an AGT of 1s, but can also process other smaller image sizes much faster (see Fig. \ref{fig:workers}). Figure 1 shows that the relationship between worker count and 
+    
+    
+    Figure \ref{fig:workers} shows that increasing the number of workers also increases the effective processing speed. This relationship is \textit{somewhat} linear: doubling the workers from 1, 2, to 4 on the \verb|128x128| and \verb|256x256| images seem to also halve the average generation time. However, the relationship is weaker for \verb|64x64| and 8 workers across all image sizes, which implies that the system is bottlenecked by some other factor. We believe that it is bottlenecked by both processing speed and channel communication with the distributor, since it needs to collect the `ghost rows' before the generation can advance. 
 
-    \begin{figure}[h]
-        \begin{center}
-            \begin{tabular}{|c|c|c|}
-                \hline Workers & Size & Avg. Generation Time (ms) \\
-                \hline 1 & 64x64 & 19.69 \\
-                2 & 64x64 & 11.63 \\
-                4 & 64x64 & 11.64 \\
-                8 & 64x64 & 11.62 \\
-                1 & 128x128	& 77.72 \\
-                2 & 128x128	& 39.27 \\
-                4 & 128x128 & 19.40 \\
-                8 & 128x128 & 15.91 \\
-                1 & 256x256	& 312.50 \\
-                2 & 256x256	& 152.28 \\
-                4 & 256x256	& 77.52 \\
-                8 & 256x256	& 60.36 \\
-                \hline
-            \end{tabular}
-        \end{center}
-    \end{figure}
-
-    Hard channels are channels between cores while soft channels are between threads on the same core, so a way to reduce the effect of the bottleneck would be to prefer \textbf{soft channel} communcation over \textbf{hard channel} communication. Soft channels have lower latency ??
+    \textbf{Hard channels} are channels between cores while \textbf{soft channels} are between threads on the same core, so a way to reduce the effect of the bottleneck would be to prefer soft channel communcation over hard channel communication. Soft channels have lower latency ??
 \end{document}

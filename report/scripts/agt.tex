@@ -1,0 +1,56 @@
+% This file was created by matplotlib2tikz v0.6.18.
+\begin{tikzpicture}
+
+\definecolor{color3}{rgb}{0.83921568627451,0.152941176470588,0.156862745098039}
+\definecolor{color2}{rgb}{0.172549019607843,0.627450980392157,0.172549019607843}
+\definecolor{color1}{rgb}{1,0.498039215686275,0.0549019607843137}
+\definecolor{color0}{rgb}{0.12156862745098,0.466666666666667,0.705882352941177}
+
+\begin{axis}[
+legend cell align={left},
+legend entries={{1 Worker},{2 Workers},{4 Workers},{8 Workers}},
+legend style={at={(0.03,0.97)}, anchor=north west, draw=white!80.0!black},
+tick align=outside,
+tick pos=left,
+x grid style={lightgray!92.02614379084967!black},
+xlabel={Image Size},
+xmin=59.7141114583557, xmax=274.374006409291,
+xmode=log,
+y grid style={lightgray!92.02614379084967!black},
+ylabel={AGT (ms)},
+ymin=9.85652739630042, ymax=368.410684006516,
+ymode=log,
+log basis x = {2},
+log basis y = {2}
+]
+\addlegendimage{no markers, color0}
+\addlegendimage{no markers, color1}
+\addlegendimage{no markers, color2}
+\addlegendimage{no markers, color3}
+\addplot [semithick, color0]
+table [row sep=\\]{%
+64	19.69 \\
+128	77.72 \\
+256	312.5 \\
+};
+\addplot [semithick, color1]
+table [row sep=\\]{%
+64	11.63 \\
+128	39.27 \\
+256	152.28 \\
+};
+\addplot [semithick, color2]
+table [row sep=\\]{%
+64	11.64 \\
+128	19.4 \\
+256	77.52 \\
+};
+\addplot [semithick, color3]
+table [row sep=\\]{%
+64	11.62 \\
+128	15.91 \\
+256	60.36 \\
+};
+\end{axis}
+
+\end{tikzpicture}
