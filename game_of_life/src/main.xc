@@ -7,14 +7,24 @@
 #include <stdint.h>
 #include "pgmIO.h"
 #include "i2c.h"
-#define IMHT 64                //image height
-#define IMWD 64              //image width
+
+#define IMHT 1024
+#define IMWD 1024
 #define WORKERS 2
 #define WORKER_ROWS (IMHT / WORKERS)
 #define PACKED_WD (IMWD / 32)
-#define infname  "test64.pgm"     //put your input image path here
-#define outfname "testout64.pgm" //put your output image path here
-typedef unsigned char uchar;      //using uchar as shorthand
+#define infname  "test1024.pgm"
+#define outfname "testout1024.pgm"
+
+// buttons and LED constants
+#define BUTTON_EXPORT 13
+#define BUTTON_START 14
+#define RGB_RED 0b1000
+#define RGB_GREEN 0b100
+#define RGB_BLUE 0b010
+#define GREEN 0b1
+
+typedef unsigned char uchar;
 typedef uint32_t uint32;
 
 on tile[0]: in port buttons = XS1_PORT_4E; //port to access xCore-200 buttons
@@ -110,14 +120,15 @@ void conway_worker(chanend work_in, chanend above, chanend below, uchar sendFirs
     }
     while(1){
         // send and receive 'ghost rows'
-        for (short x = 0; x < PACKED_WD; x++) {
-            // if it works... (pls optimize}
-            if (sendFirst) {
+        if (sendFirst) {
+            for (short x = 0; x < PACKED_WD; x++) {
                 above <: cells[1][x];
                 above :> cells[0][x];
                 below <: cells[WORKER_ROWS][x];
                 below :> cells[WORKER_ROWS + 1][x];
-            } else {
+            }
+        } else {
+            for (short x = 0; x < PACKED_WD; x++) {
                 below :> cells[WORKER_ROWS + 1][x];
                 below <: cells[WORKER_ROWS][x];
                 above :> cells[0][x];
@@ -128,7 +139,7 @@ void conway_worker(chanend work_in, chanend above, chanend below, uchar sendFirs
         for (short y = 1; y < WORKER_ROWS + 1 ; y++) {
             uint32 processed[PACKED_WD] = {0};
             for (short x = 0; x < PACKED_WD; x++) {
-                uint32 u_row = y - 1, d_row = y + 1;
+                short u_row = y - 1, d_row = y + 1;
                 for (uchar i = 0; i < 32; i++) {
                     // l, c, r represent the shifts to get the neighbouring cell bits
                     // l_pack and r_pack are the left and right packed bits
@@ -139,7 +150,9 @@ void conway_worker(chanend work_in, chanend above, chanend below, uchar sendFirs
                     uchar neighbours = ((cells[u_row][l_pack] >> l) & 0x1) + ((cells[u_row][x] >> c) & 0x1) + ((cells[u_row][r_pack] >> r) & 0x1)
                                      + ((cells[y][l_pack]     >> l) & 0x1) +                                + ((cells[y][r_pack]     >> r) & 0x1)
                                      + ((cells[d_row][l_pack] >> l) & 0x1) + ((cells[d_row][x] >> c) & 0x1) + ((cells[d_row][r_pack] >> r) & 0x1);
-                    uchar next = next_cell(neighbours, (cells[y][x] >> c) & 0x1);
+                    //uchar next = next_cell(neighbours, (cells[y][x] >> c) & 0x1);
+                    uchar cell_value = (((cells[y][x] >> c) & 0x1) * 9) + neighbours;
+                    uchar next = cell_value == 11 || cell_value == 12 || cell_value == 3;
                     alive_cells += next;
                     processed[x] |= (next << (31 - i));
                 }
@@ -149,11 +162,11 @@ void conway_worker(chanend work_in, chanend above, chanend below, uchar sendFirs
             }
         }
 
-        // wait for export flag and send total cells alive
-        uchar export;
-        work_in :> export;
+        // send total cells alive, and export if necessary
+        int export = 0;
         work_in <: alive_cells;
-        if (export == 1){
+        work_in :> export;
+        if (export > 0){
             for (short y = 0; y < WORKER_ROWS; y++){
                 for (short x = 0; x < PACKED_WD; x++){
                     work_in <: cells[y][x];
@@ -171,78 +184,81 @@ void conway_worker(chanend work_in, chanend above, chanend below, uchar sendFirs
 }
 
 
-void distributor(chanend c_in, chanend fromAcc, chanend work_in[], chanend fromListener, chanend distributorToVisualiser, chanend toDataOut, chanend toTimer) {
-    int value = 1;
+void distributor(chanend data_in, chanend orient, chanend workers[], chanend buttons, chanend visual, chanend data_out, chanend time) {
     int rounds = 0;
     int tilted = 0;
 
     // starting up and wait for tilting of the xCore-200 Explorer
-    printf( "ProcessImage: Start, size = %dx%d\n", IMHT, IMWD );
-    printf( "Waiting for SW1...\n" );
-    while (value != 14)
-        fromListener :> value;
-    distributorToVisualiser <: 1;
+    printf("ProcessImage: Start, size = %dx%d\n", IMHT, IMWD);
+    printf("Waiting for SW1...\n" );
+    int pressed = 1;
+    while (pressed != BUTTON_START)
+        buttons :> pressed;
 
-    uint32 total_cells;
-    uchar flag = 0;
-
+    visual <: RGB_GREEN;
     // send worker packets
-    for (int y = 0; y < IMHT; y++) {
-        for (int x = 0; x < PACKED_WD; x++) {
+    for (short y = 0; y < IMHT; y++) {
+        for (short x = 0; x < PACKED_WD; x++) {
             uint32 current_packet;
-            c_in :> current_packet;
-            work_in[(uint32) y / WORKER_ROWS] <: current_packet;
+            data_in :> current_packet;
+            workers[(short) y / WORKER_ROWS] <: current_packet;
         }
     }
+    visual <: GREEN;
 
-    toTimer <: 1;
+    uint32 total_cells;
+    printf("Processing...\n");
+    time <: 1;
     while (1) {
-        select {
-            case fromListener :> int button:
-                flag = button & 0x1;
-                break;
-            default:
-                flag = 0;
-                break;
-        }
-        if (flag) {
-            toDataOut <: 1;
-        }
-        distributorToVisualiser <: (int)(flag * 2) + ((rounds+1)%2);
-        //Transfer flag for writing to stdout
+        // update cell count
+        uint32 cells;
         total_cells = 0;
-        for (int i = 0; i < WORKERS; i++){
-            work_in[i] <: flag;
-            uint32 cells;
-            work_in[i] :> cells;
+        for (int i = 0; i < WORKERS; i++) {
+            workers[i] :> cells;
             total_cells += cells;
-
-            if (flag) {
-                for (int y = 0; y < WORKER_ROWS; y++){
-                    for (int x = 0; x < PACKED_WD; x++){
-                        uint32 current_packet;
-                        work_in[i] :> current_packet;
-                        toDataOut <: current_packet;
+        }
+        rounds++;
+        visual <: GREEN & rounds;
+        uchar export = 0;
+        select {
+            case buttons :> int button:
+                export = (button == BUTTON_EXPORT);
+                if (button == BUTTON_EXPORT) {
+                    visual <: RGB_BLUE;
+                    data_out <: 1;
+                    for (short i = 0; i < WORKERS; i++) {
+                        workers[i] <: 1;
+                        for (short y = 0; y < WORKER_ROWS; y++) {
+                            for (short x = 0; x < PACKED_WD; x++) {
+                                uint32 current_packet;
+                                workers[i] :> current_packet;
+                                data_out <: current_packet;
+                            }
+                        }
                     }
                 }
+                break;
+            default:
+                // if no button is ready just move on
+                break;
+        }
+        if (!export) {
+            for (int i = 0; i < WORKERS; i++) {
+                workers[i] <: 0;
             }
         }
-        distributorToVisualiser <: ((rounds+1)%2);
-
-        rounds++;
-        distributorToVisualiser <: ((rounds+1)%2);
-
-        fromAcc <: 1;
-        fromAcc :> tilted;
+        orient <: 1;
+        orient :> tilted;
         if (tilted == 1){
-            distributorToVisualiser <: ((rounds+1)%2) + 8;
-            uint32 time;
-            toTimer <: 1;
-            toTimer :> time;
-            printf("Processing stopped...\nGeneration: %u, Time Elapsed: %u ms, Alive: %u\n", rounds, time, total_cells);
+            visual <: ((rounds+1)%2) + 8;
+            uint32 elapsed;
+            time <: 1;
+            time :> elapsed;
+            printf("Processing stopped...\nGeneration: %u, Time Elapsed: %u ms, Alive: %u\n", rounds, elapsed, total_cells);
             while (tilted == 1)
-               fromAcc :> tilted;
-            distributorToVisualiser <: ((rounds+1)%2);
+               orient :> tilted;
+            visual <: ((rounds+1)%2);
+            printf("Processing resumed...\n");
         }
     }
 }
@@ -279,7 +295,6 @@ void time_worker(chanend toDist) {
 void DataOutStream(char outname[], chanend fromDist)
 {
     int res;
-    //int serving;
     uchar line[ IMWD ];
     uint32 packed_line[PACKED_WD];
 
@@ -316,26 +331,26 @@ void DataOutStream(char outname[], chanend fromDist)
 //
 /////////////////////////////////////////////////////////////////////////////////////////
 void orientation( client interface i2c_master_if i2c, chanend toDist) {
-  i2c_regop_res_t result;
-  char status_data = 0;
-  int tilted = 0;
-  int flag;
+    i2c_regop_res_t result;
+    char status_data = 0;
+    int tilted = 0;
+    int flag;
 
-  // Configure FXOS8700EQ
-  result = i2c.write_reg(FXOS8700EQ_I2C_ADDR, FXOS8700EQ_XYZ_DATA_CFG_REG, 0x01);
-  if (result != I2C_REGOP_SUCCESS) {
-    printf("I2C write reg failed\n");
-  }
-  
-  // Enable FXOS8700EQ
-  result = i2c.write_reg(FXOS8700EQ_I2C_ADDR, FXOS8700EQ_CTRL_REG_1, 0x01);
-  if (result != I2C_REGOP_SUCCESS) {
-    printf("I2C write reg failed\n");
-  }
+    // Configure FXOS8700EQ
+    result = i2c.write_reg(FXOS8700EQ_I2C_ADDR, FXOS8700EQ_XYZ_DATA_CFG_REG, 0x01);
+    if (result != I2C_REGOP_SUCCESS) {
+        printf("I2C write reg failed\n");
+    }
 
-  while (1) {
+    // Enable FXOS8700EQ
+    result = i2c.write_reg(FXOS8700EQ_I2C_ADDR, FXOS8700EQ_CTRL_REG_1, 0x01);
+    if (result != I2C_REGOP_SUCCESS) {
+        printf("I2C write reg failed\n");
+    }
+
+    while (1) {
       toDist :> flag;
-  //Probe the orientation x-axis forever
+      //Probe the orientation x-axis forever
       while (1) {
         //check until new orientation data is available
         do {
