@@ -8,6 +8,9 @@
 \usepackage{minted}
 \usepackage{pgfplots}
 \usepackage{parskip}
+\usepackage{amsmath}
+\usepackage{xcolor}
+\usepackage[margin=2cm]{caption}
 
 \pgfplotsset{compat=1.16}
 
@@ -49,7 +52,41 @@
     \pagebreak
 
     \section{Tests and Experiments}
-    (2 pages max): Show the result of the given 16x16 image after 2 rounds. Describe briefly the other experiments you carried out, provide a selection of appropriate results and output images. This must be done for at least the example images provided and for at least one example image of your own choosing (showcasing the merit of your system). List the important factors responsible for virtues and limitations of your system. 
+    (2 pages max): Show the result of the given 16x16 image after 2 rounds. Describe briefly the other experiments you carried out, provide a selection of appropriate results and output images. This must be done for at least the example images provided and for at least one example image of your own choosing (showcasing the merit of your system). List the important factors responsible for virtues and limitations of your system.
+    
+    \pagebreak
+
+    \begin{figure}
+        %input tests here
+    \end{figure}
+
+    \subsection{Bit Packing}
+
+    We pack 32 cells into a single \verb|uint32| as soon as the data is read by \verb|data_in|, which reduces the memory footprint by 8x and also reduces the channel congestion by 32x. Reducing the memory footprint means that we can fit larger boards into memory, and reducing channel congestion means that there is less time spent waiting for threads to communicate, effectively increasing the processing speed. However, bit packing means that our system does not support boards with width less than 32; the algorithm for evolving a generation relies on bit shifting and a full `packet'.
+    
+    \begin{figure}[h]
+        \input{bitpacking.tex}
+        \caption{Bit packing code}
+        \label{fig:bitpack}
+    \end{figure}
+
+    \subsection{Evolution}
+
+    To further save on memory, our workers evolve the board `in place', i.e. there is only one copy of the board, and this stores both the state of the current generation and the next. This is achieved by exploiting the fact that once a row is processed, the row above it is redundant, and as such we can overwrite the above row with the new processed row. A downside of this approach is that after each processing round, the every row needs to be shifted down once to offset back to normal and make room for the overlapping rows. 
+
+    \begin{figure}[h]
+        \begin{center}
+            \input{array.tex}
+            \caption{Processing the current row and placing it in the row above. Green: processed row; Blue: unprocessed row.}
+        \end{center}
+    \end{figure}
+
+    \subsection{Architecture}
+
+    Additionally, the \verb|distributor| does not store the state of the board, but passes on the work from the \verb|data_in| to the correct worker; it is then up to the workers to send their overlapping rows to each other. Without this approach, the distributor would end up storing the `initial state' of the board, which, for a \verb|1024x1024| image, would result in $1024 \cdot 32 \cdot 4 = 131072$KB of wasted memory.
+
+    
+
     \pagebreak
 
     % ?? is a placeholder for a future citation :)
@@ -57,21 +94,10 @@
     
     \begin{figure}
         \begin{center}
-            \input{table.tex} \\
-            \input{scripts/agt.tex}
-            \hspace{1cm}
-            \input{time.tex}
-            \vspace*{-2mm}
+            \input{table.tex}
+            \caption{The effect of increasing worker count and size of image on Average Generation Time.}
+            \label{fig:agt}
         \end{center}
-        \vspace{-1mm}
-        \caption{Effect of increasing worker count on processing speed. AGT is Average Generation Time.}
-        \label{fig:workers}
     \end{figure}
-
-    Our system can maximally process a \verb|1024x1024| image across 8 workers with an AGT of 1s, but can also process other smaller image sizes much faster (see Fig. \ref{fig:workers}). Figure 1 shows that the relationship between worker count and 
-    
-    
-    Figure \ref{fig:workers} shows that increasing the number of workers also increases the effective processing speed. This relationship is \textit{somewhat} linear: doubling the workers from 1, 2, to 4 on the \verb|128x128| and \verb|256x256| images seem to also halve the average generation time. However, the relationship is weaker for \verb|64x64| and 8 workers across all image sizes, which implies that the system is bottlenecked by some other factor. We believe that it is bottlenecked by both processing speed and channel communication with the distributor, since it needs to collect the `ghost rows' before the generation can advance. 
-
-    \textbf{Hard channels} are channels between cores while \textbf{soft channels} are between threads on the same core, so a way to reduce the effect of the bottleneck would be to prefer soft channel communcation over hard channel communication. Soft channels have lower latency ??
+    Our system can maximally process approximately \verb|3,240,000| cells (a \verb|1800x1800| image) across 2-8 workers. 
 \end{document}

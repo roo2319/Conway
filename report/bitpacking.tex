@@ -1,0 +1,23 @@
+\hspace{-0.9cm}
+\begin{minipage}{0.45\textwidth}
+    \begin{minted}[fontsize=\footnotesize]{C}
+        uint32_t pack(uchar bits[32]) {
+            uint32_t packed = 0;
+            for (uchar i = 0; i < 32; i++) {
+                packed |= (uint32_t) (bits[i] >> 7) << (31 - i);
+            }
+            return packed;
+        }
+    \end{minted}
+\end{minipage}
+\hspace{0.4cm}
+\begin{minipage}{0.45\textwidth}
+    \begin{minted}[fontsize=\footnotesize]{C}
+        void unpack(uchar result[32], uint32_t packed) {
+            for (uchar i = 0; i < 32; i++) {
+                result[i] = ((packed >> (31 - i)) & 0x1) * 255;
+                }
+            }
+        }
+    \end{minted}
+\end{minipage}
