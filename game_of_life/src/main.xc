@@ -7,9 +7,9 @@
 #include <stdint.h>
 #include "pgmIO.h"
 #include "i2c.h"
-#define IMHT 1024                //image height
-#define IMWD 1024              //image width
-#define WORKERS 8
+#define IMHT 64                //image height
+#define IMWD 64              //image width
+#define WORKERS 2
 #define WORKER_ROWS (IMHT / WORKERS)
 #define PACKED_WD (IMWD / 32)
 #define infname  "test64.pgm"     //put your input image path here
@@ -83,7 +83,7 @@ void DataInStream(char inname[], chanend c_out)
 }
 
 // positive modulo function
-inline int mod(int x, int n) {
+int mod(int x, int n) {
     return (x % n + n) % n;
 }
 
@@ -100,11 +100,8 @@ uint32 next_cell(int neighbours, char cell) {
 //The worker will recieve the cells it works on plus a 'ghost row' at the top and bottom and
 //a ghost collumn on the left and right. The height must take this into account but modular arithmetic
 //is used for the width so the width shouldn't. Worker communicates directly with data out using flag
-void conway_worker(chanend work_in, chanend work_out, chanend above, chanend below, uchar aboveFirst) {
+void conway_worker(chanend work_in, chanend above, chanend below, uchar sendFirst) {
     uint32 cells[WORKER_ROWS + 2][PACKED_WD];
-    //uint32 processed[WORKER_ROWS][PACKED_WD];
-    uchar export;
-
     // initialise main cells from dist
     for (short y = 1; y < WORKER_ROWS + 1; y++) {
         for (short x = 0; x < PACKED_WD; x++) {
@@ -112,19 +109,21 @@ void conway_worker(chanend work_in, chanend work_out, chanend above, chanend bel
         }
     }
     while(1){
-
         // send and receive 'ghost rows'
         for (short x = 0; x < PACKED_WD; x++) {
-            // if it works...
-            if (aboveFirst) {
+            // if it works... (pls optimize}
+            if (sendFirst) {
                 above <: cells[1][x];
                 above :> cells[0][x];
+                below <: cells[WORKER_ROWS][x];
+                below :> cells[WORKER_ROWS + 1][x];
             } else {
                 below :> cells[WORKER_ROWS + 1][x];
                 below <: cells[WORKER_ROWS][x];
+                above :> cells[0][x];
+                above <: cells[1][x];
             }
         }
-        //printf("im here!\n");
         uint32 alive_cells = 0;
         for (short y = 1; y < WORKER_ROWS + 1 ; y++) {
             uint32 processed[PACKED_WD] = {0};
@@ -150,17 +149,17 @@ void conway_worker(chanend work_in, chanend work_out, chanend above, chanend bel
             }
         }
 
-        // wait for export flag, if 1 then send to dataOut
+        // wait for export flag and send total cells alive
+        uchar export;
         work_in :> export;
+        work_in <: alive_cells;
         if (export == 1){
             for (short y = 0; y < WORKER_ROWS; y++){
                 for (short x = 0; x < PACKED_WD; x++){
-                    work_out <: cells[y][x];
+                    work_in <: cells[y][x];
                 }
             }
         }
-        // send back to signal done
-        work_in <: alive_cells;
 
         // shift processed rows downwards, ready for ghost rows
         for (short y = WORKER_ROWS; y > 0; y--) {
@@ -168,53 +167,24 @@ void conway_worker(chanend work_in, chanend work_out, chanend above, chanend bel
                 cells[y][x] = cells[y - 1][x];
             }
         }
-
-        // send ghost rows to dist for other workers
-        //for (short x = 0; x < PACKED_WD; x++){
-        //    work_in <: cells[0][x];
-        //}
-        //for (short x = 0; x < PACKED_WD; x++){
-        //    work_in <: cells[WORKER_ROWS - 1][x];
-        //}
-
-
-        // accept ghost rows
-        //for (short x = 0; x < PACKED_WD; x++){
-        //    work_in :> cells[0][x];
-        //}
-        //for (short x = 0; x < PACKED_WD; x++){
-        //    work_in :> cells[WORKER_ROWS + 1][x];
-        //}
     }
 }
 
 
-void distributor(chanend c_in, chanend fromAcc, chanend work_in[], chanend fromListener, chanend distributorToVisualiser, chanend toDataOut, chanend toTimer)
-{
+void distributor(chanend c_in, chanend fromAcc, chanend work_in[], chanend fromListener, chanend distributorToVisualiser, chanend toDataOut, chanend toTimer) {
     int value = 1;
     int rounds = 0;
     int tilted = 0;
 
-    //Starting up and wait for tilting of the xCore-200 Explorer
+    // starting up and wait for tilting of the xCore-200 Explorer
     printf( "ProcessImage: Start, size = %dx%d\n", IMHT, IMWD );
     printf( "Waiting for SW1...\n" );
     while (value != 14)
         fromListener :> value;
     distributorToVisualiser <: 1;
 
-    // uint32 instate[IMHT][PACKED_WD];
-    // uint32 redundant[WORKERS*2][PACKED_WD];
     uint32 total_cells;
-    // Contains 0,7,8,15
-    uchar flag = 1;
-
-    // printf( "Processing...\n" );
-    // for (int y = 0; y < IMHT; y++ ) {   //go through all lines
-    //    for (int x = 0; x < PACKED_WD; x++ ) { //go through each pixel per line
-    //        c_in :> instate[y][x];
-    //    }
-    //}
-    //printf("%u\n", sizeof(instate));
+    uchar flag = 0;
 
     // send worker packets
     for (int y = 0; y < IMHT; y++) {
@@ -225,20 +195,7 @@ void distributor(chanend c_in, chanend fromAcc, chanend work_in[], chanend fromL
         }
     }
 
-
-    // init timer
     toTimer <: 1;
-    //for (int i = 0; i < WORKERS; i++){
-    //    for (int x = 0; x < PACKED_WD; x++) {
-    //        work_in[i] <: instate[mod((i * WORKER_ROWS) - 1, IMHT)][x];
-    //    }
-    //    for (int y = (WORKER_ROWS * i); y <= (WORKER_ROWS * (i+1)); y++){
-    //        for (int x = 0; x < PACKED_WD; x++) {
-    //           work_in[i] <: instate[y % IMHT][x];
-    //        }
-    //    }
-    //}
-
     while (1) {
         select {
             case fromListener :> int button:
@@ -259,26 +216,22 @@ void distributor(chanend c_in, chanend fromAcc, chanend work_in[], chanend fromL
             uint32 cells;
             work_in[i] :> cells;
             total_cells += cells;
-            //Transfer redundant rows
-            //for (int y = 0; y < 2; y++){
-            //    for (int x = 0; x < PACKED_WD; x++){
-            //        work_in[i] :> redundant[(2*i)+y][x];
-            //    }
-            //}
+
+            if (flag) {
+                for (int y = 0; y < WORKER_ROWS; y++){
+                    for (int x = 0; x < PACKED_WD; x++){
+                        uint32 current_packet;
+                        work_in[i] :> current_packet;
+                        toDataOut <: current_packet;
+                    }
+                }
+            }
         }
         distributorToVisualiser <: ((rounds+1)%2);
 
-        //for (int i = 0; i < WORKERS; i++){
-        //    for (signed int y = (2*i) - 1; y < (2*i)+3; y += 3){
-        //        for (int x = 0; x < PACKED_WD; x++){
-        //            work_in[i] <: redundant[mod(y,(WORKERS*2))][x];
-        //        }
-        //    }
-        //}
         rounds++;
         distributorToVisualiser <: ((rounds+1)%2);
 
-        // printf( "\nOne processing round completed...\n" );fflush(stdout);
         fromAcc <: 1;
         fromAcc :> tilted;
         if (tilted == 1){
@@ -323,10 +276,10 @@ void time_worker(chanend toDist) {
 // Write pixel stream from channel c_in to PGM image file
 //
 /////////////////////////////////////////////////////////////////////////////////////////
-void DataOutStream(char outname[], chanend c_in[WORKERS], chanend fromDist)
+void DataOutStream(char outname[], chanend fromDist)
 {
     int res;
-    int serving;
+    //int serving;
     uchar line[ IMWD ];
     uint32 packed_line[PACKED_WD];
 
@@ -344,14 +297,7 @@ void DataOutStream(char outname[], chanend c_in[WORKERS], chanend fromDist)
         printf("DataOutStream: Exporting to %s...\n", outfname);
         for (int y = 0; y < IMHT; y++ ) {
             for (int x = 0; x < PACKED_WD; x++ ) {
-                serving = 1;
-                while (serving) {
-                    select {
-                        case c_in[int j] :> packed_line[x]:
-                            serving = 0;
-                            break;
-                    }
-                }
+                fromDist :> packed_line[x];
             }
             for (int i = 0; i < PACKED_WD; i++) {
                 unpack(&line[i * 32], packed_line[i]);
@@ -444,7 +390,6 @@ i2c_master_if i2c[1];               //interface to orientation
 chan c_inIO,
      c_control,
      work_in[WORKERS],
-     work_out[WORKERS],
      c_workers[WORKERS],
      buttonsToDistributor,
      distributorToLEDs,
@@ -455,11 +400,11 @@ par {
     on tile[0]: i2c_master(i2c, 1, p_scl, p_sda, 10);   //server thread providing orientation data
     on tile[0]: orientation(i2c[0],c_control);        //client thread reading orientation data
     on tile[1]: DataInStream(infname, c_inIO);          //thread to read in a PGM image
-    on tile[1]: DataOutStream(outfname, work_out, distributorToDataOut);       //thread to write out a PGM image
+    on tile[1]: DataOutStream(outfname, distributorToDataOut);       //thread to write out a PGM image
     on tile[1]: distributor(c_inIO, c_control, work_in,buttonsToDistributor,distributorToLEDs, distributorToDataOut, distributorToTimer);//thread to coordinate work on image
     on tile[1]: time_worker(distributorToTimer);
     par(int i = 0; i < WORKERS; i++){
-        on tile[i % 2]: conway_worker(work_in[i], work_out[i], c_workers[i], c_workers[(i + 1) % WORKERS], i % 2);
+        on tile[i / (WORKERS / 2)]: conway_worker(work_in[i], c_workers[i], c_workers[(i + 1) % WORKERS], i % 2);
     }
     on tile[0]: buttonListener(buttons, buttonsToDistributor);
     on tile[0]: showLEDs(leds,distributorToLEDs);
