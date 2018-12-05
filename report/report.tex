@@ -6,11 +6,13 @@
 \usepackage[utf8]{inputenc}
 \usepackage[english]{babel}
 \usepackage{minted}
+\usepackage{tikz}
 \usepackage{pgfplots}
 \usepackage{parskip}
 \usepackage{amsmath}
 \usepackage{xcolor}
 \usepackage[margin=2cm]{caption}
+\usepackage{graphics}
 
 \pgfplotsset{compat=1.16}
 
@@ -54,15 +56,9 @@
     \section{Tests and Experiments}
     (2 pages max): Show the result of the given 16x16 image after 2 rounds. Describe briefly the other experiments you carried out, provide a selection of appropriate results and output images. This must be done for at least the example images provided and for at least one example image of your own choosing (showcasing the merit of your system). List the important factors responsible for virtues and limitations of your system.
     
-    \pagebreak
-
-    \begin{figure}
-        %input tests here
-    \end{figure}
-
     \subsection{Bit Packing}
 
-    We pack 32 cells into a single \verb|uint32| as soon as the data is read by \verb|data_in|, which reduces the memory footprint by 8x and also reduces the channel congestion by 32x. Reducing the memory footprint means that we can fit larger boards into memory, and reducing channel congestion means that there is less time spent waiting for threads to communicate, effectively increasing the processing speed. However, bit packing means that our system does not support boards with width less than 32; the algorithm for evolving a generation relies on bit shifting and a full `packet'.
+    We pack 32 cells into a single \verb|uint32| as soon as the data is read by \verb|data_in|, which reduces the memory footprint and channel congestion. The memory footprint is reduced by a factor of 8 since each cell is represented using a single bit over a \verb|uchar| which allows us to fit larger boards into memory. Channel congestion however, is reduced by a factor of 32. Beforehand, the cells were sent one at a time, but with bit packing we can send 32 cells in one message. This reduces waiting times for channel communication, and therefore increases processing speed. However, our evolution algorithm relies on both the cells being full packets and extensive bit shifting. As a result, our system does not work with images where the width is not divisible by 32.
     
     \begin{figure}[h]
         \input{bitpacking.tex}
@@ -72,20 +68,27 @@
 
     \subsection{Evolution}
 
-    To further save on memory, our workers evolve the board `in place', i.e. there is only one copy of the board, and this stores both the state of the current generation and the next. This is achieved by exploiting the fact that once a row is processed, the row above it is redundant, and as such we can overwrite the above row with the new processed row. A downside of this approach is that after each processing round, the every row needs to be shifted down once to offset back to normal and make room for the overlapping rows. 
+    To further save on memory, our workers evolve the board `in place', i.e. there is only one copy of the board which stores both the state of the current generation and the next. This is achieved by exploiting the fact that once a row is processed, the row above is redundant, and as such we can overwrite it with the new processed row. A downside of this approach is that the next generation is shifted upwards by one row. Therefore, its necessary to shift every row back down to keep the board structure the same and make room for the overlapping rows.
 
     \begin{figure}[h]
         \begin{center}
             \input{array.tex}
-            \caption{Processing the current row and placing it in the row above. Green: processed row; Blue: unprocessed row.}
+            \caption{Processing the current row and placing it in the row above. Green: next generation row; Blue: current generation row.}
+            \label{fig:rows}
         \end{center}
     \end{figure}
 
     \subsection{Architecture}
 
-    Additionally, the \verb|distributor| does not store the state of the board, but passes on the work from the \verb|data_in| to the correct worker; it is then up to the workers to send their overlapping rows to each other. Without this approach, the distributor would end up storing the `initial state' of the board, which, for a \verb|1024x1024| image, would result in $1024 \cdot 32 \cdot 4 = 131072$KB of wasted memory.
+    Our \verb|distributor| does not store the state of the board, but passes on the work from the \verb|data_in| to the correct worker; it is then up to the workers to send their overlapping rows to each other. Without this approach, the distributor would end up storing the `initial state' of the board, which, for a \verb|1024x1024| image, would result in $1024 \cdot 32 \cdot 4 = 131072$KB of wasted memory. In fact, between generations, the workers only send their overlapping rows to each other unless it is time to export the board. This, paired with the `empty' \verb|distributor|, avoids the \verb|distributor| becoming a bottleneck for evolution since the workers can communicate in parallel. The workers are also split evenly across the tiles to minimise hard channel usage, with the first $\frac{n}{2}$ being on tile 0 and the remaining on tile 1.
 
-    
+    \begin{figure}[h]
+        \begin{center}
+            \includegraphics[width=0.6\textwidth]{architecture.png}
+            \caption{High-level channel architecture.}
+            \label{fig:architecture}
+        \end{center}
+    \end{figure}
 
     \pagebreak
 
