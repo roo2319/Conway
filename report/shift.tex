@@ -1,0 +1,15 @@
+\begin{minipage}{0.5\textwidth}
+    \begin{minted}[fontsize=\footnotesize]{C}
+    // ...
+    for (short i = 0; i < PACKED_WD; i++) {
+        cells[y - 1][i] = processed[i];
+    }
+    // ...
+    // shift cells back down
+    for (short y = WORKER_ROWS; y > 0; y--) {
+        for (short x = 0; x < PACKED_WD; x++) {
+            cells[y][x] = cells[y - 1][x];
+        }
+    }
+    \end{minted}
+\end{minipage}

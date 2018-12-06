@@ -1,0 +1,16 @@
+\begin{minted}[fontsize=\footnotesize]{C}
+// l, c, r represent the shifts to get the neighbouring cell bits
+// l_pack and r_pack are the left and right packed bits
+// they're usually the same unless the current bit is on the edge of the pack
+unsigned char l = mod(-i, 32), c = 31 - i, r = i == 31 ? 31 : 30 - i;
+unsigned char l_pack = i == 0 ? mod(x - 1, PACKED_WD) : x;
+unsigned char r_pack = i == 31 ? mod(x + 1, PACKED_WD) : x;
+unsigned char neighbours = ((cells[u_row][l_pack] >> l) & 0x1) 
+                         + ((cells[u_row][x]      >> c) & 0x1) 
+                         + ((cells[u_row][r_pack] >> r) & 0x1)
+                         + ((cells[y][l_pack]     >> l) & 0x1)
+                         + ((cells[y][r_pack]     >> r) & 0x1)
+                         + ((cells[d_row][l_pack] >> l) & 0x1) 
+                         + ((cells[d_row][x]      >> c) & 0x1) 
+                         + ((cells[d_row][r_pack] >> r) & 0x1);
+\end{minted}

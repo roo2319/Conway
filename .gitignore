@@ -3,3 +3,9 @@ bin
 *.xe
 *.pdf
 .metadata
+*.fls
+*.aux
+*.log
+*.fdb_latexmk
+_minted-report/
+*.gz
