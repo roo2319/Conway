@@ -55,15 +55,15 @@
 
     \section{Tests and Experiments}
     
-    The main factors which contribute to the success and shortcomings of our system are the choice of architecture, bit packing and evolving the board in place. These factors together allow us to process images larger than \verb|1024x1024|. We tested our system in multiple ways, such as:
+    We tested our system in multiple ways, such as:
     
     \begin{itemize}
         \setlength\itemsep{-0.2\baselineskip}
         \item Comparing two iterations of a \verb|32x32| image to another implementation of the Game of Life. (Figure \ref{fig:test32})
         \item Examining some sample generations of a \verb|1024x1024| image starting from a straight line. (Figure \ref{fig:test1024})
         \item Varying the worker count and image size. (Section \ref{workercount})
-        \item Changing the distribution of workers across the tiles. (Section \ref{??})
-        \item Comparing asynchronous channels with synchronous channels. (Section \ref{??})
+        \item Changing the distribution of workers across the tiles. (Section \ref{workerdistribution})
+        \item Comparing asynchronous channels with synchronous channels. (Section \ref{asyncchannels})
     \end{itemize}
     
     \begin{figure}[h]
@@ -81,10 +81,10 @@
 
     \begin{figure}[h]
         \begin{center}
-            \includegraphics[width=0.15\textwidth]{test1024.png}
-            \includegraphics[width=0.15\textwidth]{testout1024-1.png}
-            \includegraphics[width=0.15\textwidth]{testout1024-2.png}
-            \includegraphics[width=0.15\textwidth]{testout1024-3.png}
+            \includegraphics[width=0.2\textwidth]{test1024.png}
+            \includegraphics[width=0.2\textwidth]{testout1024-1.png}
+            \includegraphics[width=0.2\textwidth]{testout1024-2.png}
+            \includegraphics[width=0.2\textwidth]{testout1024-3.png}
             \caption{Example generations of a \texttt{1024x1024} image, beginning from a straight line.}
             \label{fig:test1024}
         \end{center}
@@ -114,7 +114,19 @@
 
     \subsection{Worker Distribution} \label{workerdistribution}
 
-    \subsection{Channel Types} \label{channeltypes}
+    In the \verb|xCore-200| there are \textbf{hard} and \textbf{soft} channels, where hard channels are across physical tiles, and soft channels are between individual threads on a tile. Hard channels will have higher latency since the data must travel a larger distance in comparison to a soft channel. However, using more soft channels means that a single tile is doing more processing, so it may in fact be more efficient to split the work across both tiles to utilise both cores.
+
+    In our experiment we tested \verb|256x256| and \verb|512x512| since they're quick to test while still being large enough to be affected by optimisations.
+
+    \begin{figure}[h]
+        \begin{center}
+            \input{hardsoftchannels.tex}
+            \caption{The effect of varying the communication between the distributor and workers.}
+            \label{fig:hardsoftchannels}
+        \end{center}
+    \end{figure}
+
+    \subsection{Asynchronous Channels} \label{asyncchannels}
 
     \pagebreak
 
