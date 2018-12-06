@@ -150,7 +150,8 @@ void conway_worker(chanend work_in, chanend above, chanend below, uchar sendFirs
                     uchar neighbours = ((cells[u_row][l_pack] >> l) & 0x1) + ((cells[u_row][x] >> c) & 0x1) + ((cells[u_row][r_pack] >> r) & 0x1)
                                      + ((cells[y][l_pack]     >> l) & 0x1) +                                + ((cells[y][r_pack]     >> r) & 0x1)
                                      + ((cells[d_row][l_pack] >> l) & 0x1) + ((cells[d_row][x] >> c) & 0x1) + ((cells[d_row][r_pack] >> r) & 0x1);
-                    //uchar next = next_cell(neighbours, (cells[y][x] >> c) & 0x1);
+                    // multiply by 9 because neighbours is always less than 9
+                    // this removes the need to check if the cell is alive
                     uchar cell_value = (((cells[y][x] >> c) & 0x1) * 9) + neighbours;
                     uchar next = cell_value == 11 || cell_value == 12 || cell_value == 3;
                     alive_cells += next;

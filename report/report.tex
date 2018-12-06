@@ -120,7 +120,7 @@
             \label{fig:agt}
         \end{center}
     \end{figure}
-
+    
     \begin{figure}[h]
         \begin{center}
             \input{agtplot.tex}
@@ -129,27 +129,30 @@
         \end{center}
     \end{figure}
 
-    We can measure the processing speed by the AGT (Average Generation Time). From Figure \ref{fig:agt} it's clear that increasing the number of workers is effective at reducing the AGT, although only up to a point. Regardless of worker count, the AGT for \verb|64x64| and \verb|32x32| remains at 11.64, and the AGT for \verb|128x128| with 8 workers is also 11.64. This implies that there is a bottleneck in our system, either fundamentally by the processor speed or by a design choice of ours.
+    We can measure the processing speed by the AGT (Average Generation Time). From Figure \ref{fig:agt} it's clear that increasing the number of workers is effective at reducing the AGT, although only up to a point. Regardless of worker count, the AGT for \verb|64x64| and \verb|32x32| remains at 11.64, and the AGT for \verb|128x128| with 8 workers is also 11.64. This implies that there is a limitation on our system. (see Section \ref{limits})
 
     However for the larger images, doubling the worker count halves the AGT, which implies that increasing the workers gives a \textit{linear} speed up, and this is reflected by the straight lines in Figure \ref{fig:agtplot}. Furthermore, increasing the image size by a factor of 4 also increases the AGT by a factor of 4; this is expected since an $n$-fold increase in the number of cells is an $n$-fold increase in the amount of work. A nice consequence of this behaviour is that the AGT of an image with $n$ cells and $m$ workers is approximately the same as the AGT of an image with $4n$ cells and $4m$ workers (e.g. the AGT of \verb|128x128| with 2 workers is approximately equal to the AGT of \verb|256x256| with 8 workers).
 
     \subsection{Worker Distribution} 
     \label{workerdistribution}
 
-    In the \verb|xCore-200| there are \textbf{hard} and \textbf{soft} channels, where hard channels are across physical tiles, and soft channels are between individual threads on a tile. Hard channels will have higher latency since the data must travel a larger distance in comparison to a soft channel. However, using more soft channels means that a single tile is doing more processing, so it may in fact be more efficient to split the work across both tiles to utilise both cores.
+    In the \verb|xCore-200| there are \textbf{hard} and \textbf{soft} channels, where hard channels are across physical tiles, and soft channels are between individual threads on a tile. Hard channels will have higher latency since the data must travel a larger distance in comparison to a soft channel. We can vary the number of hard channels by either changing the position of the distributor with respect to the tiles, or by varying the tile distribution of the workers. Alternating the tiles for the workers will result in more hard channels since adjacent workers will be on separate tiles. However, having the first $\frac{n}{2}$ workers on one tile and the remaining on the other will result in hard channels between only two workers.
 
-    In our experiment we tested \verb|256x256| and \verb|512x512| since they're quick to test while still being large enough to be affected by optimisations.
+    In our experiment we tested the distributor position using 4 workers (as we cannot have more than 8 threads on a single tile), and the worker distribution using both 8 and 4 workers.
 
     \begin{figure}[h]
         \begin{center}
-            \input{hardsoftchannels.tex}
-            \caption{The effect of varying the communication between the distributor and workers.}
-            \label{fig:hardsoftchannels}
+            \input{distributordistribution.tex}
+            \input{workerdistribution.tex}
+            \caption{Varying the communication channels between the distributor and workers.}
+            \label{fig:distribution}
         \end{center}
     \end{figure}
 
     \subsection{Asynchronous Channels} 
     \label{asyncchannels}
+
+    
 
     \pagebreak
 
@@ -157,5 +160,4 @@
     \section{Critical Analysis} 
     \label{analysis}
 
-    % i've done this wrong :)
 \end{document}
