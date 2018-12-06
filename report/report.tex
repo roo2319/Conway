@@ -51,7 +51,7 @@
 
     \section{Functionality and Design}
     \subsection{Design Overview}
-    To implement Conway's game of life, one of the first design decision we had was to split the board's rows between the workers. If we had two workers and 16 rows then each worker would get 8 rows. This does not actually work though as each worker needs information from the rows directly above and below it's block. To do this, we have the workers each send their redundant rows to each other. In order to make sure that output arrives in the correct order we have the distributor send a flag to the workers who will then send their portion of the board only when they have the flag. They then return the flag afterwards so that another worker can send their data. We would have had a direct channel between the workers and the data\_out but we are restricted by the hard limits of channels imposed by the board. 
+    To implement Conway's game of life, one of the first design decision we had was to split the board's rows between the workers. If we had two workers and 16 rows then each worker would get 8 rows. This does not actually work though as each worker needs information from the rows directly above and below it's block. To do this, we have the workers each send their redundant rows to each other, so the distributor does not store the board at all. In order to make sure that exporting arrives in the correct order, we have the distributor send a flag to the workers who will then send their portion of the board only when they have the flag. They then return the flag afterwards so that another worker can send their data. We would have had a direct channel between the workers and the data\_out but we are restricted by the hard limits of channels imposed by the board. 
     \subsection{Bit packing}
     During the program we pack 32 uchars into a single Int value allowing us to transfer the data far more quickly across channels. As well as this, The reduced size means that it is actually possible to keep the larger images on the board and process them, as without packing we would run out of space.
     \subsection{Operating in place}
@@ -80,10 +80,10 @@
     \begin{itemize}
         \setlength\itemsep{-0.2\baselineskip}
         \item Comparing two iterations of a \verb|32x32| image to another implementation of the Game of Life. (Figure \ref{fig:test32})
+        \item Testing the example \verb|512x512| image given (Figure \ref{fig:testexamples})
         \item Examining some sample generations of a \verb|1024x1024| image starting from a straight line. (Figure \ref{fig:test1024})
         \item Varying the worker count and image size. (Section \ref{workercount})
         \item Changing the distribution of workers across the tiles. (Section \ref{workerdistribution})
-        \item Comparing asynchronous channels with synchronous channels. (Section \ref{asyncchannels})
     \end{itemize}
     
     \begin{figure}[h]
@@ -96,6 +96,15 @@
             \includegraphics[width=0.15\textwidth]{verify32-2.png}
             \caption{State following 2 iterations of a \texttt{32x32} image. \\ Left: our system; Right: \texttt{https://bitstorm.org/gameoflife/}}
             \label{fig:test32}
+        \end{center}
+    \end{figure}
+
+    \begin{figure}[h]
+        \begin{center}
+            \includegraphics[width=0.15\textwidth]{test256.png}
+            \includegraphics[width=0.15\textwidth]{testout256.png}
+            \caption{The state of \texttt{256x256} following 100 iterations.}
+            \label{fig:test256}
         \end{center}
     \end{figure}
 
@@ -129,35 +138,57 @@
         \end{center}
     \end{figure}
 
-    We can measure the processing speed by the AGT (Average Generation Time). From Figure \ref{fig:agt} it's clear that increasing the number of workers is effective at reducing the AGT, although only up to a point. Regardless of worker count, the AGT for \verb|64x64| and \verb|32x32| remains at 11.64, and the AGT for \verb|128x128| with 8 workers is also 11.64. This implies that there is a limitation on our system. (see Section \ref{limits})
+    We can measure the processing speed by the AGT (Average Generation Time). From Figure \ref{fig:agt} it's clear that increasing the number of workers is effective at reducing the AGT. Originally, we had a bottleneck which caused the AGT to not go any lower than 11.64ms, regardless of worker count. We pinpointed the cause as the accelerometer, as each time the distributor requested the most recent accelerometer data, it had to wait for the thread to read from the register. 
+    
+    Instead, we added another thread which holds the most recent accelerometer data when available and passes it to the distributor when requested. We did encounter a bug in the system, so we decided to exclude this fix from the stable submitted version. The data in Figure \ref{fig:agt} is from the patched version.
 
-    However for the larger images, doubling the worker count halves the AGT, which implies that increasing the workers gives a \textit{linear} speed up, and this is reflected by the straight lines in Figure \ref{fig:agtplot}. Furthermore, increasing the image size by a factor of 4 also increases the AGT by a factor of 4; this is expected since an $n$-fold increase in the number of cells is an $n$-fold increase in the amount of work. A nice consequence of this behaviour is that the AGT of an image with $n$ cells and $m$ workers is approximately the same as the AGT of an image with $4n$ cells and $4m$ workers (e.g. the AGT of \verb|128x128| with 2 workers is approximately equal to the AGT of \verb|256x256| with 8 workers).
+    Following the fix, doubling the worker count halves the AGT, which implies that increasing the workers gives a \textit{linear} speed up, and this is reflected by the straight lines in Figure \ref{fig:agtplot}. Furthermore, increasing the image size by a factor of 4 also increases the AGT by a factor of 4; this is expected since an $n$-fold increase in the number of cells is an $n$-fold increase in the amount of work. A nice consequence of this behaviour is that the AGT of an image with $n$ cells and $m$ workers is approximately the same as the AGT of an image with $4n$ cells and $4m$ workers (e.g. the AGT of \verb|128x128| with 2 workers is approximately equal to the AGT of \verb|256x256| with 8 workers).
 
     \subsection{Worker Distribution} 
     \label{workerdistribution}
 
-    In the \verb|xCore-200| there are \textbf{hard} and \textbf{soft} channels, where hard channels are across physical tiles, and soft channels are between individual threads on a tile. Hard channels will have higher latency since the data must travel a larger distance in comparison to a soft channel. We can vary the number of hard channels by either changing the position of the distributor with respect to the tiles, or by varying the tile distribution of the workers. Alternating the tiles for the workers will result in more hard channels since adjacent workers will be on separate tiles. However, having the first $\frac{n}{2}$ workers on one tile and the remaining on the other will result in hard channels between only two workers.
+    In the \verb|xCore-200| there are \textbf{hard} and \textbf{soft} channels, where hard channels are across physical tiles, and soft channels are between individual threads on a tile. Hard channels will have higher latency since the data must travel a larger distance in comparison to a soft channel. We can vary the number of hard channels by either changing the position of the distributor with respect to the tiles: if they're on separate tiles then there'll be more hard channels.
 
     In our experiment we tested the distributor position using 4 workers (as we cannot have more than 8 threads on a single tile), and the worker distribution using both 8 and 4 workers.
 
     \begin{figure}[h]
         \begin{center}
             \input{distributordistribution.tex}
-            \input{workerdistribution.tex}
             \caption{Varying the communication channels between the distributor and workers.}
             \label{fig:distribution}
         \end{center}
     \end{figure}
 
-    \subsection{Asynchronous Channels} 
-    \label{asyncchannels}
-
+    However, the data suggests that changing the organisation of the distributor and workers does not affect the AGT, and there seems to be no trend between results. This implies that the communication is not limiting the AGT. It is still best to store the workers across both tiles, as (especially for 8 workers) the memory is shared equally and we can make use of the full 512KB of RAM. 
     
-
     \pagebreak
 
     % ?? is a placeholder for a future citation :)
     \section{Critical Analysis} 
     \label{analysis}
+
+    The maximum size that our image can process is \verb|1792x1792| which is 3,211,264 cells, using up to 8 workers. Figure \ref{fig:agt} shows how fast our system can evolve from \verb|32x32| to \verb|1024x1024| with a varying amount of workers. Although we have solved many problems to increase the maximum image size, we could go further. 
+
+    \subsection{Limiting Factors} \label{limits}
+
+    A large limiting factor of our program is that it cannot process images which do not have a width which is a multiple of 32. This is a result of our packing algorithm and evolution algorithm, which both rely on there being 32 full bits to work correctly. Instead we could implement a fallback strategy, such as packing into smaller packets so that more sizes are supported.
+
+    Our system also does not work with only a single worker. It relies on a worker having two neighbours so that they can be connected together through channels. Ideally, we could dynamically choose a strategy depending on how many workers there are, e.g. if there is a single worker, then don't run concurrently and rely on having neighbours.
+
+    \verb|data_in| and \verb|data_out| read/write to the file one line at a time. For an image with width $w$ this wastes $2w$ bytes, as both the \verb|data_in| and \verb|data_out| must preallocate $w$ bytes for the line. Instead, we could read/write to the file a packet at a time, which means that only 4 bytes would be allocated for each.
+
+    Currently, the distributor acts as a controller which coordinates other tasks such as exporting, timing, initialisation etc. It is connected to every worker so that it can notify them when to export. However, we could change the first worker to be a `master' worker which communicates with the distributor and cascades the messages to the other workers. This would remove the need for each worker to be connected to the distributor, and we could therefore connect each worker directly to \verb|data_out| to avoid the distributor becoming a bottleneck. 
+
+    \subsection{Future Considerations}
+    
+    We did not have the chance to test how using asynchronous channels impacts the performance compared to synchronous channels. Asynchronous channels operate using a buffer which may prove useful when the workers need to swap their overlapping rows: a worker can simply place the data on the buffer even if the receiver is currently busy (assuming the buffer is not full).
+
+    Additionally, the \verb|xCore-200| is harshly limited by its I/O speed, with larger boards taking upwards of 10 minutes to transfer to/from the board. We could dynamically generate the image on the board to skip transfer times, and also generate known patterns/structures to allow for easier testing.
+
+    We could connect multiple \verb|xCore-200| boards together and implement cross-board communication. This would enable us to use more workers, channels, and memory which would massively increase the maximum board size. Communication across the boards would be quite slow however since the packets have a larger distance to travel and therefore larger latency.
+
+    Currently, the program stores every single cell but packed into a \verb|uint32|. Instead, we could identify common `structures' that occur within the Game of Life, such as lengths of dead cells or gliders, and give them some sort of identifier. This would allow the program to skip over large sections of dead cells as they will not be alive in the next generation, or to swap out known structures easily as we know how they progress. 
+    
+    A much more difficult yet rewarding evolution strategy would be that of HashLife, which is able to optimise the rules of the Game of Life and remove redundancy. Unfortunately, HashLife is implemented using a \verb|quadtree| and is also memoized (i.e. it stores the results of previous computations). These two factors together mean that although it was significant gains in performance, it also has significant gains in memory usage, which may not be viable for large board sizes on the \verb|xCore-200|. On the other hand, it may be exceptional at evolving smaller board sizes where memory is less of an issue.
 
 \end{document}

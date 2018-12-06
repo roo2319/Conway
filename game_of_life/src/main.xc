@@ -8,13 +8,13 @@
 #include "pgmIO.h"
 #include "i2c.h"
 
-#define IMHT 1024
-#define IMWD 1024
-#define WORKERS 2
+#define IMHT 256
+#define IMWD 256
+#define WORKERS 8
 #define WORKER_ROWS (IMHT / WORKERS)
 #define PACKED_WD (IMWD / 32)
-#define infname  "test1024.pgm"
-#define outfname "testout1024.pgm"
+#define infname  "test256.pgm"
+#define outfname "testout256.pgm"
 
 // buttons and LED constants
 #define BUTTON_EXPORT 13
