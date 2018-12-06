@@ -18,8 +18,8 @@
 
 \newlength\figurewidth
 \newlength\figureheight
-\setlength\figurewidth{0.3\textwidth}
-\setlength\figureheight{0.3\textwidth}
+\setlength\figurewidth{0.4\textwidth}
+\setlength\figureheight{0.4\textwidth}
 
 \begin{document}
 
@@ -55,13 +55,15 @@
 
     \section{Tests and Experiments}
     
-    The main factors which contribute to the success and shortcomings of our system are the choice of architecture, bit packing and the algorithm for evolving the game. These factors together allow us to process images larger than \verb|1024x1024|. We tested our system in multiple ways, such as:
+    The main factors which contribute to the success and shortcomings of our system are the choice of architecture, bit packing and evolving the board in place. These factors together allow us to process images larger than \verb|1024x1024|. We tested our system in multiple ways, such as:
     
     \begin{itemize}
         \setlength\itemsep{-0.2\baselineskip}
         \item Comparing two iterations of a \verb|32x32| image to another implementation of the Game of Life. (Figure \ref{fig:test32})
         \item Examining some sample generations of a \verb|1024x1024| image starting from a straight line. (Figure \ref{fig:test1024})
-        \item Varying our system parameters to see how it impacts the processing time. (Figure \ref{fig:agt} and Section \ref{analysis})
+        \item Varying the worker count and image size. (Section \ref{workercount})
+        \item Changing the distribution of workers across the tiles. (Section \ref{??})
+        \item Comparing asynchronous channels with synchronous channels. (Section \ref{??})
     \end{itemize}
     
     \begin{figure}[h]
@@ -79,65 +81,16 @@
 
     \begin{figure}[h]
         \begin{center}
-            \includegraphics[width=0.2\textwidth]{test1024.png}
-            \includegraphics[width=0.2\textwidth]{testout1024-1.png}
-            \includegraphics[width=0.2\textwidth]{testout1024-2.png}
-            \includegraphics[width=0.2\textwidth]{testout1024-3.png}
+            \includegraphics[width=0.15\textwidth]{test1024.png}
+            \includegraphics[width=0.15\textwidth]{testout1024-1.png}
+            \includegraphics[width=0.15\textwidth]{testout1024-2.png}
+            \includegraphics[width=0.15\textwidth]{testout1024-3.png}
             \caption{Example generations of a \texttt{1024x1024} image, beginning from a straight line.}
             \label{fig:test1024}
         \end{center}
     \end{figure}
     
-    \subsection{Architecture and the Distributor}
-    
-    Without an effective memory distribution and architecture, our system was unable to process images larger than \verb|512x512|. We chose to make the \verb|distributor| `organise' the cell data from \verb|data_in| and send it to the correct worker a packet at a time. Without this approach, the \verb|distributor| would need to store the initial state of the board, which would be useless after the first generation, and would take up $1024 \cdot 32 \cdot 4 = 131072$KB for a \verb|1024x1024| image. 
-    
-    Since the \verb|distributor| is not using memory redundantly, the tiles use approximately the same amount of memory. Therefore, we can implement storing the board evenly across both tiles to effectively double the space we can use for the board. Each worker communicates with their `neighbour' workers based on their position in the image (Figure \ref{fig:architecture}) to swap their overlapping rows. This allows the workers to be `isolated' and work on their respective portion of the image in parallel.
-    
-    \begin{figure}[h]
-        \begin{center}
-            \includegraphics[width=0.4\textwidth]{architecture.png}
-            \caption{High-level channel architecture.}
-            \label{fig:architecture}
-        \end{center}
-    \end{figure}
-
-
-    \subsection{Bit Packing}
-
-    Packing 32 cells into a single 32-bit integer massively improves the performance of the system, but does bring a small downside. The memory usage is reduced by a factor of 8 since each cell is represented using 1 bit rather than 8, allowing for larger boards in memory. Channel congestion however, is reduced by a factor of 32 since we can send 32 cells in one message. This reduces waiting times for channel communication, and therefore increases processing speed. A downside of bit packing is that our system is no longer compatible with images where the width is not a multiple of 32: the algorithm for evolving the generation relies on the packet being full. (Section \ref{evolution})
-    
-    \begin{figure}[h]
-        \input{bitpacking.tex}
-        \caption{Bit packing code}
-        \label{fig:bitpack}
-    \end{figure}
-
-    \subsection{Evolution} \label{evolution}
-
-    The algorithm for evolving the board carries two `quirks' with it to save memory. Firstly, the algorithm operates solely on the packed cells and never unpacks them. Rather, it uses bit shifting and modular arithmetic to calculate the number of neighbours a cell has. 
-
-    \begin{figure}[h]
-        \input{evolve.tex}
-        \caption{Algorithm for calculating the current cell's neighbour count.}
-        \label{fig:evolve}
-    \end{figure}
-
-    Secondly, there is only one copy of the board which stores both the state of the current generation and the next. This exploits the fact that once a row is processed, the row above is redundant, so we can overwrite it with the new processed row. Of course, the downside of this approach is that the next generation is shifted upwards by one row. Its necessary to shift every row back down, which could impact performance..
-
-    \begin{figure}[h]
-        \begin{center}
-            \input{array.tex}
-            \input{shift.tex}
-            \caption{Processing the current row and placing it in the row above. \\ Green: next generation row; Blue: current generation row.}
-            \label{fig:rows}
-        \end{center}
-    \end{figure}
-
-    \pagebreak
-
-    % ?? is a placeholder for a future citation :)
-    \section{Critical Analysis} \label{analysis}
+    \subsection{Worker Count} \label{workercount}
 
     \begin{figure}[h]
         \begin{center}
@@ -147,5 +100,26 @@
         \end{center}
     \end{figure}
 
-    Our system can maximally process approximately \verb|3,240,000| cells (a \verb|1800x1800| image) across 2-8 workers. 
+    \begin{figure}[h]
+        \begin{center}
+            \input{agtplot.tex}
+            \caption{Log plot of Average Generation Time vs. Worker Count.}
+            \label{fig:agtplot}
+        \end{center}
+    \end{figure}
+
+    We can measure the processing speed by the AGT (Average Generation Time). From Figure \ref{fig:agt} it's clear that increasing the number of workers is effective at reducing the AGT, although only up to a point. Regardless of worker count, the AGT for \verb|64x64| and \verb|32x32| remains at 11.64, and the AGT for \verb|128x128| with 8 workers is also 11.64. This implies that there is a bottleneck in our system, either fundamentally by the processor speed or by a design choice of ours.
+
+    However for the larger images, doubling the worker count halves the AGT, which implies that increasing the workers gives a \textit{linear} speed up, and this is reflected by the straight lines in Figure \ref{fig:agtplot}. Furthermore, increasing the image size by a factor of 4 also increases the AGT by a factor of 4; this is expected since an $n$-fold increase in the number of cells is an $n$-fold increase in the amount of work. A nice consequence of this behaviour is that the AGT of an image with $n$ cells and $m$ workers is approximately the same as the AGT of an image with $4n$ cells and $4m$ workers (e.g. the AGT of \verb|128x128| with 2 workers is approximately equal to the AGT of \verb|256x256| with 8 workers).
+
+    \subsection{Worker Distribution} \label{workerdistribution}
+
+    \subsection{Channel Types} \label{channeltypes}
+
+    \pagebreak
+
+    % ?? is a placeholder for a future citation :)
+    \section{Critical Analysis} \label{analysis}
+
+    % i've done this wrong :)
 \end{document}
