@@ -1,16 +1,15 @@
-\begin{minted}[fontsize=\footnotesize]{C}
-// l, c, r represent the shifts to get the neighbouring cell bits
-// l_pack and r_pack are the left and right packed bits
-// they're usually the same unless the current bit is on the edge of the pack
-unsigned char l = mod(-i, 32), c = 31 - i, r = i == 31 ? 31 : 30 - i;
-unsigned char l_pack = i == 0 ? mod(x - 1, PACKED_WD) : x;
-unsigned char r_pack = i == 31 ? mod(x + 1, PACKED_WD) : x;
-unsigned char neighbours = ((cells[u_row][l_pack] >> l) & 0x1) 
-                         + ((cells[u_row][x]      >> c) & 0x1) 
-                         + ((cells[u_row][r_pack] >> r) & 0x1)
-                         + ((cells[y][l_pack]     >> l) & 0x1)
-                         + ((cells[y][r_pack]     >> r) & 0x1)
-                         + ((cells[d_row][l_pack] >> l) & 0x1) 
-                         + ((cells[d_row][x]      >> c) & 0x1) 
-                         + ((cells[d_row][r_pack] >> r) & 0x1);
-\end{minted}
+\begin{minipage}{0.5\textwidth}
+    \begin{minted}[fontsize=\footnotesize]{C}
+    for (short y = 1; y < WORKER_ROWS + 1 ; y++){
+        uint32 processed[PACMED_WD] = {0};
+        for (short x = 0; x < PACKED_WD; x++){
+            //process row here
+        }
+    //Insert the newly processed row in the row 
+    //above it's original position
+        for (short i = 0; i < PACKED_WD; i++) {
+            cells[y - 1][i] = processed[i];
+        }
+    }
+    \end{minted}
+\end{minipage}

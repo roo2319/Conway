@@ -50,9 +50,29 @@
     \end{titlepage}
 
     \section{Functionality and Design}
-    1 Page Max: Outline what functionality you have implemented, which problems you have solved with your implementation and how your program is designed to solve the problems efficiently and effectively
-    \pagebreak
+    \subsection{Design Overview}
+    To implement Conway's game of life, one of the first design decision we had was to split the board's rows between the workers. If we had two workers and 16 rows then each worker would get 8 rows. This does not actually work though as each worker needs information from the rows directly above and below it's block. To do this, we have the workers each send their redundant rows to each other. In order to make sure that output arrives in the correct order we have the distributor send a flag to the workers who will then send their portion of the board only when they have the flag. They then return the flag afterwards so that another worker can send their data. We would have had a direct channel between the workers and the data\_out but we are restricted by the hard limits of channels imposed by the board. 
+    \subsection{Bit packing}
+    During the program we pack 32 uchars into a single Int value allowing us to transfer the data far more quickly across channels. As well as this, The reduced size means that it is actually possible to keep the larger images on the board and process them, as without packing we would run out of space.
+    \subsection{Operating in place}
+    Rather than unpacking our data we decided to operate on it in place. This helps us avoid the memory and CPU overhead of packing and unpacking the data each time. During computation each processed row overwrites the row above it's original position, as that row is no longer needed for processing. This means we do not need to allocate another array to hold the results of processing.
 
+    \begin{figure}[h]
+        \begin{center}
+            \input{evolve.tex}
+            \caption{Code that will allow the system to operate in place. }
+            \label{fig:inplace}
+        \end{center}
+    \end{figure}
+    
+    
+    \subsection{Concurrent Workers}
+    Our program implements multiple concurrent threads working in parallel. The distributor sends the worker threads a portion of the board initially after which the workers communicate amongst themselves to transfer redundant rows.
+    \subsection{Top and bottom}
+    As the workers communicate between themselves for redundant rows there is potential for a deadlock if the order of sending is not well defined. Because of this, We pass a flag into each worker that defines if they send first (top) or receive first (bottom). This  allows us to concurrently send the ghost rows between threads.
+
+
+    \newpage
     \section{Tests and Experiments}
     
     We tested our system in multiple ways, such as:
@@ -90,7 +110,8 @@
         \end{center}
     \end{figure}
     
-    \subsection{Worker Count} \label{workercount}
+    \subsection{Worker Count} 
+    \label{workercount}
 
     \begin{figure}[h]
         \begin{center}
@@ -112,7 +133,8 @@
 
     However for the larger images, doubling the worker count halves the AGT, which implies that increasing the workers gives a \textit{linear} speed up, and this is reflected by the straight lines in Figure \ref{fig:agtplot}. Furthermore, increasing the image size by a factor of 4 also increases the AGT by a factor of 4; this is expected since an $n$-fold increase in the number of cells is an $n$-fold increase in the amount of work. A nice consequence of this behaviour is that the AGT of an image with $n$ cells and $m$ workers is approximately the same as the AGT of an image with $4n$ cells and $4m$ workers (e.g. the AGT of \verb|128x128| with 2 workers is approximately equal to the AGT of \verb|256x256| with 8 workers).
 
-    \subsection{Worker Distribution} \label{workerdistribution}
+    \subsection{Worker Distribution} 
+    \label{workerdistribution}
 
     In the \verb|xCore-200| there are \textbf{hard} and \textbf{soft} channels, where hard channels are across physical tiles, and soft channels are between individual threads on a tile. Hard channels will have higher latency since the data must travel a larger distance in comparison to a soft channel. However, using more soft channels means that a single tile is doing more processing, so it may in fact be more efficient to split the work across both tiles to utilise both cores.
 
@@ -126,12 +148,14 @@
         \end{center}
     \end{figure}
 
-    \subsection{Asynchronous Channels} \label{asyncchannels}
+    \subsection{Asynchronous Channels} 
+    \label{asyncchannels}
 
     \pagebreak
 
     % ?? is a placeholder for a future citation :)
-    \section{Critical Analysis} \label{analysis}
+    \section{Critical Analysis} 
+    \label{analysis}
 
     % i've done this wrong :)
 \end{document}
